@@ -69,7 +69,7 @@ describe("fireIntegrationMethodNurturing()", () => {
   });
 
   describe("when the user selects an integration method", () => {
-    /** @scenario 'Product interest identify call is fire-and-forget' */
+    /** @scenario 'Integration-method identify call is fire-and-forget' */
     it("sends only integration_method trait via identifyUser", () => {
       fireIntegrationMethodNurturing({
         userId: "user-123",
@@ -104,7 +104,7 @@ describe("fireIntegrationMethodNurturing()", () => {
   });
 
   describe("when Customer.io API is unavailable", () => {
-    /** @scenario 'Product interest identify failure does not break onboarding navigation' */
+    /** @scenario 'Integration-method identify failure does not break onboarding navigation' */
     it("does not throw (fire-and-forget)", async () => {
       const { captureException } = await import(
         "../../../../src/utils/posthogErrorCapture"
