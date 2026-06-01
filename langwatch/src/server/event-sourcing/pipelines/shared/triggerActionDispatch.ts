@@ -6,6 +6,13 @@ import type { TraceSummaryData } from "~/server/app-layer/traces/types";
 import { sendTriggerEmail } from "~/server/mailer/triggerEmail";
 import { sendSlackWebhook } from "~/server/triggers/sendSlackWebhook";
 import type { DatasetRecordEntry } from "~/server/datasets/types";
+import type {
+  OutboxDispatchPayload,
+  PgOutboxAuditAdapter,
+} from "~/server/event-sourcing/outbox/pgAuditAdapter";
+import type { EventSourcedQueueProcessor } from "~/server/event-sourcing/queues/queue.types";
+import { enqueueTriggerNotify } from "~/server/event-sourcing/outbox/triggerNotify/enqueue";
+import type { TriggerNotifyInner } from "~/server/event-sourcing/outbox/triggerNotify/payload";
 import {
   mapTraceToDatasetEntry,
   TRACE_EXPANSIONS,
@@ -98,6 +105,22 @@ export interface TriggerActionDispatchDeps {
     projectId: string;
     datasetRecords: DatasetRecordEntry[];
   }) => Promise<void>;
+  /**
+   * When both fields are set, notify-class actions (email, Slack) are
+   * routed through the outbox dispatch queue so matches inside the
+   * same cadence window coalesce into one dispatched digest. Persist
+   * actions (dataset, annotation queue) always run inline regardless
+   * — they want every match to land.
+   *
+   * Wiring `triggerNotify` is the switch that flips a deployment from
+   * "one notification per match" to ADR-025 digest grouping. Leave it
+   * absent (e.g. in unit tests that don't care) to keep the legacy
+   * inline notify path.
+   */
+  triggerNotify?: {
+    queue: EventSourcedQueueProcessor<OutboxDispatchPayload<TriggerNotifyInner>>;
+    auditAdapter: PgOutboxAuditAdapter;
+  };
 }
 
 interface ActionParams {
@@ -125,6 +148,24 @@ export async function dispatchTriggerAction({
   tenantId: string;
   foldState: TraceSummaryData;
 }): Promise<void> {
+  // Notify-class actions go through the outbox dispatch queue when
+  // wired, so a burst of matches inside the same cadence window
+  // dispatches as one digest. The queue's processBatch callback
+  // (createTriggerNotifyDispatcher) renders the digest at lease time;
+  // everything below here stays inline only for persist-class actions
+  // or the legacy unwired path.
+  if (deps.triggerNotify && NOTIFY_TRIGGER_ACTIONS.has(trigger.action)) {
+    await enqueueTriggerNotify({
+      queue: deps.triggerNotify.queue,
+      auditAdapter: deps.triggerNotify.auditAdapter,
+      projectId: tenantId,
+      trigger,
+      traceId,
+      foldState,
+    });
+    return;
+  }
+
   const project = await deps.projects.getById(tenantId);
 
   if (!project) {

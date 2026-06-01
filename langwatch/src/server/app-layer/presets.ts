@@ -4,6 +4,7 @@ import { prisma as globalPrisma } from "~/server/db";
 import { getClickHouseClientForProject, isClickHouseEnabled, type ClickHouseClientResolver } from "~/server/clickhouse/clickhouseClient";
 import { esClient, TRACE_INDEX, traceIndexId } from "../elasticsearch";
 import { EventSourcing } from "../event-sourcing";
+import { setupOutbox } from "../event-sourcing/outbox/setup";
 import { PipelineRegistry, type AppCommands } from "../event-sourcing/pipelineRegistry";
 import type { ScenarioExecutionReactorHandle } from "../event-sourcing/pipelines/simulation-processing/reactors/scenarioExecution.reactor";
 import { App, getApp, globalForApp, initializeApp } from "./app";
@@ -397,6 +398,24 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
       }
     : undefined;
 
+  // Outbox stack (ADR-021/025): produces dispatch rows for notify-class
+  // triggers and drains them as digests per cadence window. Both
+  // production and consumption live on the worker — reactors only
+  // run there, so the web process has no need for the stack. Leaving
+  // the stack undefined on web means dispatchTriggerAction falls
+  // through to its legacy inline path on a web-side caller, which is
+  // the safe default.
+  const outboxStack =
+    config.processRole === "worker"
+      ? setupOutbox({
+          prisma,
+          redis: redis ?? null,
+          processRole: config.processRole,
+          triggers,
+          projects,
+        })
+      : undefined;
+
   const registry = new PipelineRegistry({
     eventSourcing: es,
     repositories,
@@ -416,6 +435,12 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
     gatewayBudgetSync,
     governanceKpisSync,
     governanceOcsfEventsSync,
+    triggerNotify: outboxStack
+      ? {
+          queue: outboxStack.triggerNotifyQueue,
+          auditAdapter: outboxStack.auditAdapter,
+        }
+      : undefined,
   });
   const commands = registry.registerAll();
   (globalForApp as any).__scenarioExecutionHandle = commands.scenarioExecutionHandle;
@@ -486,6 +511,12 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
       await broadcast.close();
     },
   });
+  if (outboxStack) {
+    gracefulCloseables.push({
+      name: "outbox-dispatch-queue",
+      close: () => outboxStack.triggerNotifyQueue.close(),
+    });
+  }
   gracefulCloseables.push({
     name: "prisma",
     close: () => prisma.$disconnect(),

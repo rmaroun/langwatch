@@ -47,6 +47,12 @@ import { RedisCachedFoldStore } from "./projections/redisCachedFoldStore";
 import { RepositoryFoldStore } from "./projections/repositoryFoldStore";
 import { SUITE_RUN_PROJECTION_VERSIONS } from "./pipelines/suite-run-processing/schemas/constants";
 import type { SuiteRunStateRepository } from "./pipelines/suite-run-processing/repositories/suiteRunState.repository";
+import type {
+  OutboxDispatchPayload,
+  PgOutboxAuditAdapter,
+} from "./outbox/pgAuditAdapter";
+import type { TriggerNotifyInner } from "./outbox/triggerNotify/payload";
+import type { EventSourcedQueueProcessor } from "./queues/queue.types";
 import type { TriggerActionDispatchDeps } from "./pipelines/shared/triggerActionDispatch";
 import { createTraceProcessingPipeline } from "./pipelines/trace-processing/pipeline";
 import { createSimulationMetricsSyncReactor } from "./pipelines/trace-processing/reactors/simulationMetricsSync.reactor";
@@ -192,6 +198,16 @@ export interface PipelineRegistryDeps {
   gatewayBudgetSync?: GatewayBudgetSyncReactorDeps;
   governanceKpisSync?: GovernanceKpisSyncReactorDeps;
   governanceOcsfEventsSync?: GovernanceOcsfEventsSyncReactorDeps;
+  /**
+   * When set, notify-class trigger actions route through the outbox
+   * dispatch queue so matches inside the same cadence window coalesce
+   * into one digest (ADR-021 revision + ADR-025). Pass the queue +
+   * audit adapter pair that `setupOutbox` returned.
+   */
+  triggerNotify?: {
+    queue: EventSourcedQueueProcessor<OutboxDispatchPayload<TriggerNotifyInner>>;
+    auditAdapter: PgOutboxAuditAdapter;
+  };
 }
 
 /**
@@ -221,7 +237,7 @@ export class PipelineRegistry {
    */
   private buildTraceReactorContext(): Pick<
     TriggerActionDispatchDeps,
-    "traceById" | "addToAnnotationQueue" | "addToDataset"
+    "traceById" | "addToAnnotationQueue" | "addToDataset" | "triggerNotify"
   > & {
     deriveEvents: (params: {
       tenantId: string;
@@ -248,6 +264,7 @@ export class PipelineRegistry {
         await createManyDatasetRecords(params);
       },
       deriveEvents: (params) => traceReadDerivation.deriveEvents(params),
+      triggerNotify: this.deps.triggerNotify,
     };
   }
 
