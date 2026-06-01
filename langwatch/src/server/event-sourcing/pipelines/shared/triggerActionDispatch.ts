@@ -56,10 +56,16 @@ export const CADENCE_WINDOW_MS: Record<NotificationCadence, number> = {
 };
 
 /**
- * Resolves when a matched trigger should dispatch. This is the contract the
- * outbox dispatch layer reads: persist actions and immediate-cadence notify
- * actions fire now; digest-cadence notify actions open a window that closes
- * `CADENCE_WINDOW_MS` later.
+ * Resolves when a matched trigger should dispatch. The outbox dispatch
+ * queue (ADR-021 revision) consumes this value as `delay` on send:
+ * persist actions and immediate-cadence notify actions fire now;
+ * digest-cadence notify actions snap to the next wall-clock window
+ * boundary so every match arriving inside the same window shares a
+ * scheduled time and the queue coalesces them via `processBatch`.
+ *
+ * Windowed (not sliding) semantics: a 5min_digest with the first match
+ * at 12:03 closes the window at 12:05, so a 12:04 match joins the
+ * same digest. A 12:06 match opens the next window, closing at 12:10.
  */
 export function computeScheduledFor({
   action,
@@ -72,7 +78,9 @@ export function computeScheduledFor({
 }): Date {
   if (PERSIST_TRIGGER_ACTIONS.has(action)) return now;
   if (cadence === "immediate") return now;
-  return new Date(now.getTime() + CADENCE_WINDOW_MS[cadence]);
+  const windowMs = CADENCE_WINDOW_MS[cadence];
+  const windowStart = Math.floor(now.getTime() / windowMs) * windowMs;
+  return new Date(windowStart + windowMs);
 }
 
 export interface TriggerActionDispatchDeps {

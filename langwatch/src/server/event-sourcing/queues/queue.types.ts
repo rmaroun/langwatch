@@ -160,6 +160,53 @@ export interface EventSourcedQueueDefinition<Payload extends Record<string, unkn
 }
 
 /**
+ * Lifecycle hooks for queues that want to project state into a durable
+ * side-store (typically PG). Used by the outbox dispatch queue per
+ * ADR-021 revision: the queue is source-of-truth for execution, PG is
+ * a write-mostly audit projection maintained by the adapter.
+ *
+ * Convention: the queue's `process` callback wraps the dispatcher with
+ * the adapter calls (onLeased before, onDispatched after success,
+ * onFailed/onDead on throw). Adapter calls are non-fatal — a PG
+ * outage logs + metrics but does not block Redis-side execution.
+ *
+ * Every hook receives the `payload` (or a representative payload for
+ * batch operations) so the adapter can extract whatever identity
+ * fields it needs to locate the audit row. The adapter is responsible
+ * for the projection's idempotency.
+ */
+export interface QueueAuditAdapter<Payload> {
+  /** Job enqueued (or re-enqueued, post-dedup collapse). */
+  onEnqueue(event: {
+    payload: Payload;
+    groupKey: string;
+    dedupKey: string | undefined;
+    scheduledAt: Date;
+    maxAttempts?: number;
+  }): Promise<void>;
+
+  /** Job claimed by a worker; about to enter `process`. */
+  onLeased(event: { payload: Payload }): Promise<void>;
+
+  /** `process` returned successfully. */
+  onDispatched(event: { payload: Payload; at: Date }): Promise<void>;
+
+  /**
+   * `process` threw. `willRetry: true` means the queue will reschedule;
+   * `false` means retries are exhausted and the next event is `onDead`.
+   */
+  onFailed(event: {
+    payload: Payload;
+    error: string;
+    willRetry: boolean;
+    nextAttemptAt?: Date;
+  }): Promise<void>;
+
+  /** Final terminal — retries exhausted or non-retryable. */
+  onDead(event: { payload: Payload; lastError: string }): Promise<void>;
+}
+
+/**
  * Options for per-send overrides of queue behavior.
  * Allows individual send calls to override the queue-level delay and deduplication.
  */
