@@ -7,8 +7,11 @@ import { KSUID_RESOURCES } from "~/utils/constants";
 import { getApp } from "~/server/app-layer/app";
 import { DomainError } from "~/server/app-layer/domain-error";
 import {
+  DEFAULT_EVALUATION_DEBOUNCE_MS,
+  EVALUATION_DEBOUNCE_OPTIONS_MS,
   NOTIFICATION_CADENCES,
   NOTIFY_TRIGGER_ACTIONS,
+  type EvaluationDebounceOptionMs,
   type NotificationCadence,
 } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 import {
@@ -60,6 +63,28 @@ function resolveCadenceForUpdate(
   if (requested === undefined) return undefined;
   if (!NOTIFY_TRIGGER_ACTIONS.has(action)) return "immediate";
   return requested;
+}
+
+const evaluationDebounceMsSchema = z
+  .number()
+  .int()
+  .refine(
+    (n) => (EVALUATION_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(n),
+    {
+      message: `evaluationDebounceMs must be one of ${EVALUATION_DEBOUNCE_OPTIONS_MS.join(
+        ", ",
+      )}`,
+    },
+  );
+
+// ADR-030: per-trigger trace-readiness debounce, in ms. Required-on-input
+// schema-wise but optional at the router boundary so existing clients
+// that haven't been updated yet don't 400 — they get the non-zero default
+// at create time, and a missing field on update means "leave as-is".
+function resolveDebounceForCreate(
+  requested: EvaluationDebounceOptionMs | undefined,
+): EvaluationDebounceOptionMs {
+  return requested ?? DEFAULT_EVALUATION_DEBOUNCE_MS;
 }
 
 const triggerIdentitySchema = z.object({
@@ -158,6 +183,7 @@ export const automationRouter = createTRPCRouter({
         action: z.nativeEnum(TriggerAction),
         filters: triggerFiltersSchema,
         notificationCadence: notificationCadenceSchema.optional(),
+        evaluationDebounceMs: evaluationDebounceMsSchema.optional(),
         actionParams: z.object({
           createdByUserId: z.string().optional(),
           members: z.string().array().optional(),
@@ -250,6 +276,9 @@ export const automationRouter = createTRPCRouter({
           notificationCadence: resolveCadenceForCreate(
             input.action,
             input.notificationCadence,
+          ),
+          evaluationDebounceMs: resolveDebounceForCreate(
+            input.evaluationDebounceMs,
           ),
         },
       });
@@ -443,6 +472,7 @@ export const automationRouter = createTRPCRouter({
         actionParams: actionParamsSchema,
         templates: templateDraftSchema,
         notificationCadence: notificationCadenceSchema.optional(),
+        evaluationDebounceMs: evaluationDebounceMsSchema.optional(),
       }),
     )
     .use(checkProjectPermission("triggers:update"))
@@ -499,6 +529,9 @@ export const automationRouter = createTRPCRouter({
             ...(cadenceUpdate !== undefined
               ? { notificationCadence: cadenceUpdate }
               : {}),
+            ...(input.evaluationDebounceMs !== undefined
+              ? { evaluationDebounceMs: input.evaluationDebounceMs }
+              : {}),
           },
         });
       } else {
@@ -511,6 +544,9 @@ export const automationRouter = createTRPCRouter({
             notificationCadence: resolveCadenceForCreate(
               input.action,
               input.notificationCadence,
+            ),
+            evaluationDebounceMs: resolveDebounceForCreate(
+              input.evaluationDebounceMs,
             ),
             ...data,
           },

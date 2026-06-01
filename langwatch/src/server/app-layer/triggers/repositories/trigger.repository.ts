@@ -13,6 +13,8 @@ export interface TriggerSummary {
   message: string | null;
   customGraphId: string | null;
   notificationCadence: NotificationCadence;
+  /** Trace-readiness debounce in ms (ADR-030). 0 disables. */
+  evaluationDebounceMs: number;
 }
 
 export interface TriggerRepository {

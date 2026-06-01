@@ -26,6 +26,7 @@ export class PrismaTriggerRepository implements TriggerRepository {
         message: true,
         customGraphId: true,
         notificationCadence: true,
+        evaluationDebounceMs: true,
       },
     });
 
@@ -34,6 +35,7 @@ export class PrismaTriggerRepository implements TriggerRepository {
       actionParams: t.actionParams ?? {},
       filters: parseFilters(t.filters),
       notificationCadence: parseCadence(t.notificationCadence),
+      evaluationDebounceMs: clampDebounceMs(t.evaluationDebounceMs),
     }));
   }
 
@@ -88,4 +90,14 @@ function parseCadence(raw: string): NotificationCadence {
   return (NOTIFICATION_CADENCES as readonly string[]).includes(raw)
     ? (raw as NotificationCadence)
     : "immediate";
+}
+
+// Floor at 0 (negative would be nonsense), cap at 10 minutes so a misconfigured
+// trigger can't pin a (trigger, trace) dedup entry in Redis for hours. The UI
+// surfaces only the 0 / 15s / 30s / 1m / 2m / 5m options, but a direct DB
+// write or a future option must not bypass this guard.
+const MAX_DEBOUNCE_MS = 10 * 60 * 1000;
+function clampDebounceMs(raw: number): number {
+  if (!Number.isFinite(raw) || raw < 0) return 0;
+  return Math.min(raw, MAX_DEBOUNCE_MS);
 }

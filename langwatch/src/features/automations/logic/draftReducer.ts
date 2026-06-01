@@ -7,7 +7,11 @@ import {
 } from "~/automations/providers/client";
 import { isNotifyEntry } from "~/automations/providers/types";
 import type { FilterField, FilterParam } from "~/hooks/useFilterParams";
-import type { NotificationCadence } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
+import {
+  DEFAULT_EVALUATION_DEBOUNCE_MS,
+  type EvaluationDebounceOptionMs,
+  type NotificationCadence,
+} from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 
 /**
  * Pure state machine for the staged automation drawer (ADR-028). Lives
@@ -37,6 +41,11 @@ export interface AutomationDraft {
    *  time for persist actions, so the draft value can sit dormant while the
    *  user is type-switching. */
   notificationCadence: NotificationCadence;
+  /** Per-trigger trace-readiness debounce in ms (ADR-030). Applies to
+   *  every action class — persist triggers benefit just as much as notify
+   *  because a dataset row captured before the trace settles diverges
+   *  from the trace UI permanently. */
+  evaluationDebounceMs: EvaluationDebounceOptionMs;
   /** Per-provider slice — all present, so type-switching never loses the
    *  slice the user was on. */
   slices: AllSlices;
@@ -50,6 +59,7 @@ export type DraftAction =
   | { type: "SET_CUSTOM_GRAPH_ID"; value: string | null }
   | { type: "SET_FILTERS"; value: Partial<Record<FilterField, FilterParam>> }
   | { type: "SET_CADENCE"; value: NotificationCadence }
+  | { type: "SET_EVALUATION_DEBOUNCE"; value: EvaluationDebounceOptionMs }
   | {
       type: "SET_SLICE";
       action: TriggerAction;
@@ -68,6 +78,9 @@ export const INITIAL_DRAFT: AutomationDraft = {
   // Persist actions ignore this at the router boundary, so leaving it set
   // here while the user is picking an action is safe.
   notificationCadence: "5min_digest",
+  // ADR-030: non-zero default so a freshly-authored trigger ships with
+  // half-formed-dispatch protection on.
+  evaluationDebounceMs: DEFAULT_EVALUATION_DEBOUNCE_MS,
   slices: initialSlices(),
 };
 
@@ -97,6 +110,8 @@ export function reducer(
       return { ...state, filters: action.value };
     case "SET_CADENCE":
       return { ...state, notificationCadence: action.value };
+    case "SET_EVALUATION_DEBOUNCE":
+      return { ...state, evaluationDebounceMs: action.value };
     case "SET_SLICE":
       return {
         ...state,

@@ -12,6 +12,7 @@ import {
 import type { Monitor, TriggerAction } from "@prisma/client";
 import { Bell, Edit2, Filter, MoreVertical, Plus, Trash } from "react-feather";
 import { CLIENT_PROVIDERS } from "~/automations/providers/client";
+import { EVALUATION_DEBOUNCE_OPTIONS_MS } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 import { HoverableBigText } from "~/components/HoverableBigText";
 import { NoDataInfoBlock } from "~/components/NoDataInfoBlock";
 import { FilterDisplay } from "~/components/automations/FilterDisplay";
@@ -27,6 +28,22 @@ import { withPermissionGuard } from "../../components/WithPermissionGuard";
 import { useOrganizationTeamProject } from "../../hooks/useOrganizationTeamProject";
 import { api } from "../../utils/api";
 import { formatTimeAgo } from "../../utils/formatTimeAgo";
+
+const DEBOUNCE_LABEL_BY_MS: Record<number, string> = {
+  0: "Off",
+  15_000: "15s",
+  30_000: "30s",
+  60_000: "1m",
+  120_000: "2m",
+  300_000: "5m",
+};
+
+function debounceLabel(ms: number): string {
+  if ((EVALUATION_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(ms)) {
+    return DEBOUNCE_LABEL_BY_MS[ms] ?? `${Math.round(ms / 1000)}s`;
+  }
+  return `${Math.round(ms / 1000)}s`;
+}
 
 function Automations() {
   const { project, organizations } = useOrganizationTeamProject();
@@ -262,6 +279,9 @@ function Automations() {
                   <Table.ColumnHeader>Destination</Table.ColumnHeader>
                   <Table.ColumnHeader>Filters</Table.ColumnHeader>
                   <Table.ColumnHeader whiteSpace="nowrap">
+                    Debounce
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader whiteSpace="nowrap">
                     Last Triggered At
                   </Table.ColumnHeader>
                   <Table.ColumnHeader>Active</Table.ColumnHeader>
@@ -271,7 +291,7 @@ function Automations() {
               <Table.Body>
               {triggers.isLoading ? (
                 <Table.Row>
-                  <Table.Cell colSpan={5}>Loading...</Table.Cell>
+                  <Table.Cell colSpan={8}>Loading...</Table.Cell>
                 </Table.Row>
               ) : (
                 triggers.data?.map((trigger) => {
@@ -304,6 +324,9 @@ function Automations() {
                             />
                           ) : null}
                         </VStack>
+                      </Table.Cell>
+                      <Table.Cell whiteSpace="nowrap">
+                        {debounceLabel(trigger.evaluationDebounceMs)}
                       </Table.Cell>
                       <Table.Cell whiteSpace="nowrap">
                         {formatTimeAgo(trigger.lastRunAt)}

@@ -63,6 +63,33 @@ export const CADENCE_WINDOW_MS: Record<NotificationCadence, number> = {
 };
 
 /**
+ * UI-allowed values for `Trigger.evaluationDebounceMs` (ADR-030). The
+ * schema stores an int so a future window is one entry away, but the
+ * supported authoring options live here as a single source of truth
+ * that the router input schema, the drawer field, and the
+ * settings-list label all consume.
+ *
+ * Order matches the visible order in the drawer (Off first, ascending).
+ */
+export const EVALUATION_DEBOUNCE_OPTIONS_MS = [
+  0,
+  15_000,
+  30_000,
+  60_000,
+  120_000,
+  300_000,
+] as const;
+
+export type EvaluationDebounceOptionMs =
+  (typeof EVALUATION_DEBOUNCE_OPTIONS_MS)[number];
+
+/**
+ * App-layer default for new triggers per ADR-030. Matches the migration
+ * default so a new row and an existing row land on the same value.
+ */
+export const DEFAULT_EVALUATION_DEBOUNCE_MS: EvaluationDebounceOptionMs = 30_000;
+
+/**
  * Resolves when a matched trigger should dispatch. The outbox dispatch
  * queue (ADR-021 revision) consumes this value as `delay` on send:
  * persist actions and immediate-cadence notify actions fire now;

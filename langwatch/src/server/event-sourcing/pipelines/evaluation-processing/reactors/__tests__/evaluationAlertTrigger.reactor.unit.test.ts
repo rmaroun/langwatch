@@ -139,6 +139,7 @@ function createTrigger(
     message: "Evaluation passed",
     customGraphId: null,
     notificationCadence: "immediate",
+    evaluationDebounceMs: 0,
     ...overrides,
   };
 }
