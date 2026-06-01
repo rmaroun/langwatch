@@ -8,8 +8,8 @@ import {
 import { isNotifyEntry } from "~/automations/providers/types";
 import type { FilterField, FilterParam } from "~/hooks/useFilterParams";
 import {
-  DEFAULT_EVALUATION_DEBOUNCE_MS,
-  type EvaluationDebounceOptionMs,
+  DEFAULT_TRACE_DEBOUNCE_MS,
+  type TraceDebounceOptionMs,
   type NotificationCadence,
 } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 
@@ -45,7 +45,7 @@ export interface AutomationDraft {
    *  every action class — persist triggers benefit just as much as notify
    *  because a dataset row captured before the trace settles diverges
    *  from the trace UI permanently. */
-  evaluationDebounceMs: EvaluationDebounceOptionMs;
+  traceDebounceMs: TraceDebounceOptionMs;
   /** Per-provider slice — all present, so type-switching never loses the
    *  slice the user was on. */
   slices: AllSlices;
@@ -59,7 +59,7 @@ export type DraftAction =
   | { type: "SET_CUSTOM_GRAPH_ID"; value: string | null }
   | { type: "SET_FILTERS"; value: Partial<Record<FilterField, FilterParam>> }
   | { type: "SET_CADENCE"; value: NotificationCadence }
-  | { type: "SET_EVALUATION_DEBOUNCE"; value: EvaluationDebounceOptionMs }
+  | { type: "SET_TRACE_DEBOUNCE"; value: TraceDebounceOptionMs }
   | {
       type: "SET_SLICE";
       action: TriggerAction;
@@ -80,7 +80,7 @@ export const INITIAL_DRAFT: AutomationDraft = {
   notificationCadence: "5min_digest",
   // ADR-030: non-zero default so a freshly-authored trigger ships with
   // half-formed-dispatch protection on.
-  evaluationDebounceMs: DEFAULT_EVALUATION_DEBOUNCE_MS,
+  traceDebounceMs: DEFAULT_TRACE_DEBOUNCE_MS,
   slices: initialSlices(),
 };
 
@@ -110,8 +110,8 @@ export function reducer(
       return { ...state, filters: action.value };
     case "SET_CADENCE":
       return { ...state, notificationCadence: action.value };
-    case "SET_EVALUATION_DEBOUNCE":
-      return { ...state, evaluationDebounceMs: action.value };
+    case "SET_TRACE_DEBOUNCE":
+      return { ...state, traceDebounceMs: action.value };
     case "SET_SLICE":
       return {
         ...state,

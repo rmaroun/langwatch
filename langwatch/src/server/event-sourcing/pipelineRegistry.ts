@@ -20,7 +20,6 @@ import type { MetricRecordStorageRepository } from "../app-layer/traces/reposito
 import type { TraceSummaryRepository } from "../app-layer/traces/repositories/trace-summary.repository";
 import type { SpanStorageService } from "../app-layer/traces/span-storage.service";
 import { TraceReadDerivationService } from "../app-layer/traces/trace-read-derivation.service";
-import type { DerivedTraceEvent } from "./pipelines/trace-processing/projections/services/trace-events.derivation";
 import type { TraceSummaryService } from "../app-layer/traces/trace-summary.service";
 
 import { createEvaluationProcessingPipeline } from "./pipelines/evaluation-processing/pipeline";
@@ -52,8 +51,36 @@ import type {
   PgOutboxAuditAdapter,
 } from "./outbox/pgAuditAdapter";
 import type { TriggerNotifyInner } from "./outbox/triggerNotify/payload";
+import type { TriggerMatchRequest } from "./outbox/triggerDebounce/payload";
 import type { EventSourcedQueueProcessor } from "./queues/queue.types";
 import type { TriggerActionDispatchDeps } from "./pipelines/shared/triggerActionDispatch";
+
+/**
+ * Runtime infrastructure the trigger pipeline owns end-to-end.
+ *
+ * `triggerNotify` is the digest dispatch path (ADR-021 revision +
+ * ADR-025): notify-class trigger matches enqueue into the outbox
+ * dispatch queue with a windowed `delay`; the queue's `processBatch`
+ * coalesces the window into one dispatcher invocation, and the
+ * `PgOutboxAuditAdapter` projects every transition into PG.
+ *
+ * `debounceQueue` is the trace-readiness debounce path (ADR-030): the
+ * trigger reactors enqueue (trigger, trace) pairs, the queue's
+ * Debounce Mode dedup resets the TTL on every new span, the matcher
+ * fires once after the trace settles.
+ *
+ * Bundled into one optional field because they share lifecycle
+ * (worker-only, constructed together) and a future refactor will
+ * likely lift them off the registry deps onto the EventSourcing
+ * runtime instance.
+ */
+export interface TriggerRuntime {
+  triggerNotify: {
+    queue: EventSourcedQueueProcessor<OutboxDispatchPayload<TriggerNotifyInner>>;
+    auditAdapter: PgOutboxAuditAdapter;
+  };
+  debounceQueue: EventSourcedQueueProcessor<TriggerMatchRequest>;
+}
 import { createTraceProcessingPipeline } from "./pipelines/trace-processing/pipeline";
 import { createSimulationMetricsSyncReactor } from "./pipelines/trace-processing/reactors/simulationMetricsSync.reactor";
 import { createExperimentMetricsSyncReactor } from "./pipelines/trace-processing/reactors/experimentMetricsSync.reactor";
@@ -96,10 +123,6 @@ import { SpanAppendStore } from "./pipelines/trace-processing/projections/spanSt
 import { TraceSummaryStore } from "./pipelines/trace-processing/projections/traceSummary.store";
 import { createCustomEvaluationSyncReactor } from "./pipelines/trace-processing/reactors/customEvaluationSync.reactor";
 import { createProjectMetadataReactor } from "./pipelines/trace-processing/reactors/projectMetadata.reactor";
-import { createOrUpdateQueueItems } from "~/server/api/routers/annotation";
-import { createManyDatasetRecords } from "~/server/api/routers/datasetRecord.utils";
-import { getProtectionsForProject } from "~/server/api/utils";
-import { TraceService } from "~/server/traces/trace.service";
 import { createAlertTriggerReactor } from "@ee/governance/reactors/alertTrigger.reactor";
 import { createEvaluationTriggerReactor } from "./pipelines/trace-processing/reactors/evaluationTrigger.reactor";
 import {
@@ -199,15 +222,13 @@ export interface PipelineRegistryDeps {
   governanceKpisSync?: GovernanceKpisSyncReactorDeps;
   governanceOcsfEventsSync?: GovernanceOcsfEventsSyncReactorDeps;
   /**
-   * When set, notify-class trigger actions route through the outbox
-   * dispatch queue so matches inside the same cadence window coalesce
-   * into one digest (ADR-021 revision + ADR-025). Pass the queue +
-   * audit adapter pair that `setupOutbox` returned.
+   * Trigger pipeline runtime — outbox digest dispatch (ADR-021
+   * revision + ADR-025) and trace-readiness debounce queue (ADR-030).
+   * Worker-only; presets.ts gates construction on
+   * `processRole === "worker"`. Web gets `undefined` and both paths
+   * gracefully no-op.
    */
-  triggerNotify?: {
-    queue: EventSourcedQueueProcessor<OutboxDispatchPayload<TriggerNotifyInner>>;
-    auditAdapter: PgOutboxAuditAdapter;
-  };
+  triggerRuntime?: TriggerRuntime;
 }
 
 /**
@@ -264,7 +285,7 @@ export class PipelineRegistry {
         await createManyDatasetRecords(params);
       },
       deriveEvents: (params) => traceReadDerivation.deriveEvents(params),
-      triggerNotify: this.deps.triggerNotify,
+      triggerNotify: this.deps.triggerRuntime?.triggerNotify,
     };
   }
 
@@ -318,10 +339,7 @@ export class PipelineRegistry {
 
     const evaluationAlertTriggerReactor = createEvaluationAlertTriggerReactor({
       triggers: this.deps.triggers,
-      projects: this.deps.projects,
-      traceSummaryStore,
-      evaluationRuns: this.deps.evaluations.runs,
-      ...this.buildTraceReactorContext(),
+      triggerDebounceQueue: this.deps.triggerRuntime?.debounceQueue,
     });
 
     return this.deps.eventSourcing.register(
@@ -358,8 +376,7 @@ export class PipelineRegistry {
 
     const alertTriggerReactor = createAlertTriggerReactor({
       triggers: this.deps.triggers,
-      projects: this.deps.projects,
-      ...this.buildTraceReactorContext(),
+      triggerDebounceQueue: this.deps.triggerRuntime?.debounceQueue,
     });
 
     const customEvaluationSyncReactor = createCustomEvaluationSyncReactor({

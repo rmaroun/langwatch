@@ -1,47 +1,48 @@
 // SPDX-License-Identifier: LicenseRef-LangWatch-Enterprise
 
 import type { TraceSummaryData } from "~/server/app-layer/traces/types";
-import type { DerivedTraceEvent } from "~/server/event-sourcing/pipelines/trace-processing/projections/services/trace-events.derivation";
-import {
-  buildPreconditionTraceDataFromFoldState,
-  classifyTriggerFilters,
-  matchesTriggerFilters,
-  triggerFiltersReferenceEvents,
-} from "~/server/filters/triggerFilter.matcher";
+import type { TriggerSummary } from "~/server/app-layer/triggers/repositories/trigger.repository";
+import type { TriggerService } from "~/server/app-layer/triggers/trigger.service";
+import { classifyTriggerFilters } from "~/server/filters/triggerFilter.matcher";
 import { createLogger } from "~/utils/logger/server";
 import { captureException } from "~/utils/posthogErrorCapture";
 import type { ReactorDefinition } from "~/server/event-sourcing/reactors/reactor.types";
-import { isDispatchError } from "~/server/event-sourcing/outbox/dispatchError";
-import {
-  dispatchTriggerAction,
-  type TriggerActionDispatchDeps,
-} from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
+import { enqueueTriggerMatch } from "~/server/event-sourcing/outbox/triggerDebounce/enqueue";
+import type { TriggerMatchRequest } from "~/server/event-sourcing/outbox/triggerDebounce/payload";
+import type { EventSourcedQueueProcessor } from "~/server/event-sourcing/queues/queue.types";
 import type { TraceProcessingEvent } from "~/server/event-sourcing/pipelines/trace-processing/schemas/events";
 import { defineOriginGuardedTraceReactor } from "~/server/event-sourcing/pipelines/trace-processing/reactors/_originGuardedReactor";
 
 const logger = createLogger("langwatch:trace-processing:alert-trigger-reactor");
 
-export type AlertTriggerReactorDeps = TriggerActionDispatchDeps & {
+export interface AlertTriggerReactorDeps {
+  triggers: TriggerService;
   /**
-   * Derives the trace-level events list from stored_spans. Only invoked when a
-   * trigger actually filters on event fields (see triggerFiltersReferenceEvents),
-   * so the common no-event-filter path pays nothing.
+   * GroupQueue that holds debounced trigger-match requests (ADR-030). The
+   * reactor only ENQUEUES; the queue's matcher runs after the trace has
+   * been quiet for the trigger's `traceDebounceMs`.
+   *
+   * Optional because the registry runs on every process role but reactors
+   * only fire on the worker — the queue lives on the worker, so the web
+   * registry passes `undefined`. The handler guards defensively just in
+   * case the production wiring ever ships a reactor without a queue.
    */
-  deriveEvents: (params: {
-    tenantId: string;
-    traceId: string;
-    occurredAtMs?: number;
-    foldVersion?: number;
-  }) => Promise<DerivedTraceEvent[]>;
-};
+  triggerDebounceQueue?: EventSourcedQueueProcessor<TriggerMatchRequest>;
+}
 
 /**
- * Evaluates user-defined trace-based triggers reactively when traces arrive.
+ * Trace-pipeline reactor that schedules trigger matching when traces arrive.
  *
- * Fires on every trace event (via traceSummary fold). For each active trigger
- * on the tenant, evaluates filters in-memory against the fold state. If all
- * filters match and the trace hasn't already been sent for this trigger,
- * dispatches the configured action (email, Slack, dataset, annotation queue).
+ * Fires on every trace event. For each active trigger whose filters are
+ * trace-only (no evaluation filters — those land on the eval pipeline),
+ * the reactor enqueues a debounced match request. The GroupQueue's
+ * Debounce Mode dedup collapses repeats from the same (trigger, trace)
+ * pair onto one pending job whose TTL resets per new span. Once the
+ * trace goes silent for `trigger.traceDebounceMs`, the matcher runs the
+ * filter check and dispatches.
+ *
+ * No filter eval here — that moved into the matcher so the verdict is
+ * made against a settled trace, not a half-formed fold. See ADR-030.
  */
 export function createAlertTriggerReactor(
   deps: AlertTriggerReactorDeps,
@@ -50,94 +51,52 @@ export function createAlertTriggerReactor(
     name: "alertTrigger",
     jobIdPrefix: "alert-trigger",
     async handle(_event, context) {
-      const { tenantId, aggregateId: traceId, foldState } = context;
+      const { tenantId, aggregateId: traceId } = context;
+
+      if (!deps.triggerDebounceQueue) {
+        logger.warn(
+          { tenantId, traceId },
+          "Trigger debounce queue not wired — skipping (web-only registration?)",
+        );
+        return;
+      }
 
       const triggers = await deps.triggers.getActiveTraceTriggersForProject(
         tenantId,
       );
       if (triggers.length === 0) return;
 
-      // Derive the trace-level events list only if a trace-only trigger filters
-      // on event fields. Triggers with evaluation filters are skipped below
-      // (handled by evaluationAlertTrigger), so they don't need events here.
-      const needsEvents = triggers.some((t) => {
-        const { hasEvaluationFilters, traceFilters } = classifyTriggerFilters(
-          t.filters,
-        );
-        return !hasEvaluationFilters && triggerFiltersReferenceEvents(traceFilters);
-      });
-      const events = needsEvents
-        ? await deps.deriveEvents({
-            tenantId,
-            traceId,
-            occurredAtMs: foldState.occurredAt,
-            foldVersion: foldState.spanCount,
-          })
-        : null;
-
-      const traceData = buildPreconditionTraceDataFromFoldState(
-        foldState,
-        events,
+      // Trace-pipeline candidates: only triggers WITHOUT evaluation filters.
+      // The eval pipeline owns eval-filtered triggers — a trace event can't
+      // advance their match verdict, so enqueuing here would be wasted work.
+      const candidates = triggers.filter(
+        (t: TriggerSummary) => !classifyTriggerFilters(t.filters).hasEvaluationFilters,
       );
 
-      for (const trigger of triggers) {
+      const queue = deps.triggerDebounceQueue;
+      for (const trigger of candidates) {
         try {
-          const { traceFilters, hasEvaluationFilters } =
-            classifyTriggerFilters(trigger.filters);
-
-          // Skip triggers that require evaluation results (handled by evaluationAlertTrigger)
-          if (hasEvaluationFilters) continue;
-
-          // Skip if no trace filters match
-          if (
-            Object.keys(traceFilters).length > 0 &&
-            !matchesTriggerFilters(traceData, traceFilters)
-          ) {
-            continue;
-          }
-
-          // Atomic claim: insert TriggerSent first, dispatch only on success.
-          // Two reactors racing on the same trigger/trace (trace pipeline +
-          // eval pipeline) will see exactly one true. A reactor retry after
-          // a dispatch failure also sees false here — at-most-once.
-          const claimed = await deps.triggers.claimSend({
-            triggerId: trigger.id,
-            traceId,
+          await enqueueTriggerMatch({
+            queue,
             projectId: tenantId,
-          });
-          if (!claimed) continue;
-
-          await dispatchTriggerAction({
-            deps,
             trigger,
             traceId,
-            tenantId,
-            foldState,
           });
         } catch (error) {
-          // A failed dispatch now throws (DispatchError) rather than being
-          // swallowed; surface its retryable classification for operators. The
-          // claim already landed, so the in-line path does not retry — the
-          // outbox migration is what adds durable retry.
-          const retryable = isDispatchError(error) ? error.retryable : undefined;
+          // Enqueue failures are not retryable here (the reactor is a
+          // best-effort signal). Capture and continue so one bad row
+          // doesn't stop the rest of the candidate set.
           logger.error(
             {
               tenantId,
               traceId,
               triggerId: trigger.id,
-              retryable,
               error: error instanceof Error ? error.message : String(error),
             },
-            "Failed to evaluate trigger",
+            "Failed to enqueue trigger match",
           );
           captureException(error, {
-            extra: {
-              tenantId,
-              traceId,
-              triggerId: trigger.id,
-              triggerAction: trigger.action,
-              retryable,
-            },
+            extra: { tenantId, traceId, triggerId: trigger.id },
           });
         }
       }

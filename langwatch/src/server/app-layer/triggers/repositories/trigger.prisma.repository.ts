@@ -26,7 +26,7 @@ export class PrismaTriggerRepository implements TriggerRepository {
         message: true,
         customGraphId: true,
         notificationCadence: true,
-        evaluationDebounceMs: true,
+        traceDebounceMs: true,
       },
     });
 
@@ -35,7 +35,7 @@ export class PrismaTriggerRepository implements TriggerRepository {
       actionParams: t.actionParams ?? {},
       filters: parseFilters(t.filters),
       notificationCadence: parseCadence(t.notificationCadence),
-      evaluationDebounceMs: clampDebounceMs(t.evaluationDebounceMs),
+      traceDebounceMs: clampDebounceMs(t.traceDebounceMs),
     }));
   }
 

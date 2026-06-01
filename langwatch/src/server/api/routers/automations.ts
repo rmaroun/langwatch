@@ -7,11 +7,11 @@ import { KSUID_RESOURCES } from "~/utils/constants";
 import { getApp } from "~/server/app-layer/app";
 import { DomainError } from "~/server/app-layer/domain-error";
 import {
-  DEFAULT_EVALUATION_DEBOUNCE_MS,
-  EVALUATION_DEBOUNCE_OPTIONS_MS,
+  DEFAULT_TRACE_DEBOUNCE_MS,
+  TRACE_DEBOUNCE_OPTIONS_MS,
   NOTIFICATION_CADENCES,
   NOTIFY_TRIGGER_ACTIONS,
-  type EvaluationDebounceOptionMs,
+  type TraceDebounceOptionMs,
   type NotificationCadence,
 } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 import {
@@ -65,13 +65,13 @@ function resolveCadenceForUpdate(
   return requested;
 }
 
-const evaluationDebounceMsSchema = z
+const traceDebounceMsSchema = z
   .number()
   .int()
   .refine(
-    (n) => (EVALUATION_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(n),
+    (n) => (TRACE_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(n),
     {
-      message: `evaluationDebounceMs must be one of ${EVALUATION_DEBOUNCE_OPTIONS_MS.join(
+      message: `traceDebounceMs must be one of ${TRACE_DEBOUNCE_OPTIONS_MS.join(
         ", ",
       )}`,
     },
@@ -82,9 +82,9 @@ const evaluationDebounceMsSchema = z
 // that haven't been updated yet don't 400 — they get the non-zero default
 // at create time, and a missing field on update means "leave as-is".
 function resolveDebounceForCreate(
-  requested: EvaluationDebounceOptionMs | undefined,
-): EvaluationDebounceOptionMs {
-  return requested ?? DEFAULT_EVALUATION_DEBOUNCE_MS;
+  requested: TraceDebounceOptionMs | undefined,
+): TraceDebounceOptionMs {
+  return requested ?? DEFAULT_TRACE_DEBOUNCE_MS;
 }
 
 const triggerIdentitySchema = z.object({
@@ -183,7 +183,7 @@ export const automationRouter = createTRPCRouter({
         action: z.nativeEnum(TriggerAction),
         filters: triggerFiltersSchema,
         notificationCadence: notificationCadenceSchema.optional(),
-        evaluationDebounceMs: evaluationDebounceMsSchema.optional(),
+        traceDebounceMs: traceDebounceMsSchema.optional(),
         actionParams: z.object({
           createdByUserId: z.string().optional(),
           members: z.string().array().optional(),
@@ -277,8 +277,8 @@ export const automationRouter = createTRPCRouter({
             input.action,
             input.notificationCadence,
           ),
-          evaluationDebounceMs: resolveDebounceForCreate(
-            input.evaluationDebounceMs,
+          traceDebounceMs: resolveDebounceForCreate(
+            input.traceDebounceMs,
           ),
         },
       });
@@ -472,7 +472,7 @@ export const automationRouter = createTRPCRouter({
         actionParams: actionParamsSchema,
         templates: templateDraftSchema,
         notificationCadence: notificationCadenceSchema.optional(),
-        evaluationDebounceMs: evaluationDebounceMsSchema.optional(),
+        traceDebounceMs: traceDebounceMsSchema.optional(),
       }),
     )
     .use(checkProjectPermission("triggers:update"))
@@ -529,8 +529,8 @@ export const automationRouter = createTRPCRouter({
             ...(cadenceUpdate !== undefined
               ? { notificationCadence: cadenceUpdate }
               : {}),
-            ...(input.evaluationDebounceMs !== undefined
-              ? { evaluationDebounceMs: input.evaluationDebounceMs }
+            ...(input.traceDebounceMs !== undefined
+              ? { traceDebounceMs: input.traceDebounceMs }
               : {}),
           },
         });
@@ -545,8 +545,8 @@ export const automationRouter = createTRPCRouter({
               input.action,
               input.notificationCadence,
             ),
-            evaluationDebounceMs: resolveDebounceForCreate(
-              input.evaluationDebounceMs,
+            traceDebounceMs: resolveDebounceForCreate(
+              input.traceDebounceMs,
             ),
             ...data,
           },

@@ -1,65 +1,51 @@
 import type { EvaluationRunData } from "~/server/app-layer/evaluations/types";
-import type { EvaluationRunService } from "~/server/app-layer/evaluations/evaluation-run.service";
-import type { TraceSummaryData } from "~/server/app-layer/traces/types";
-import type { DerivedTraceEvent } from "~/server/event-sourcing/pipelines/trace-processing/projections/services/trace-events.derivation";
-import {
-  buildPreconditionTraceDataFromFoldState,
-  classifyTriggerFilters,
-  matchesEvaluationFilters,
-  matchesTriggerFilters,
-  triggerFiltersReferenceEvents,
-} from "~/server/filters/triggerFilter.matcher";
+import type { TriggerSummary } from "~/server/app-layer/triggers/repositories/trigger.repository";
+import type { TriggerService } from "~/server/app-layer/triggers/trigger.service";
+import { classifyTriggerFilters } from "~/server/filters/triggerFilter.matcher";
 import { createLogger } from "~/utils/logger/server";
 import { captureException } from "~/utils/posthogErrorCapture";
-import { isDispatchError } from "../../../outbox/dispatchError";
+import { enqueueTriggerMatch } from "../../../outbox/triggerDebounce/enqueue";
+import type { TriggerMatchRequest } from "../../../outbox/triggerDebounce/payload";
 import type {
   ReactorContext,
   ReactorDefinition,
 } from "../../../reactors/reactor.types";
-import { createTenantId } from "../../../domain/tenantId";
-import type { FoldProjectionStore } from "../../../projections/foldProjection.types";
+import type { EventSourcedQueueProcessor } from "../../../queues/queue.types";
 import type { EvaluationProcessingEvent } from "../schemas/events";
 import {
   isEvaluationCompletedEvent,
   isEvaluationReportedEvent,
 } from "../schemas/typeGuards";
-import {
-  dispatchTriggerAction,
-  type TriggerActionDispatchDeps,
-} from "../../shared/triggerActionDispatch";
 
 const logger = createLogger(
   "langwatch:evaluation-processing:evaluation-alert-trigger-reactor",
 );
 
-export interface EvaluationAlertTriggerReactorDeps
-  extends TriggerActionDispatchDeps {
-  traceSummaryStore: FoldProjectionStore<TraceSummaryData>;
-  evaluationRuns: EvaluationRunService;
+export interface EvaluationAlertTriggerReactorDeps {
+  triggers: TriggerService;
   /**
-   * Derives the trace-level events list from stored_spans. Only invoked when a
-   * trigger actually filters on event fields, so the common path pays nothing.
+   * See AlertTriggerReactorDeps.triggerDebounceQueue. Optional for the
+   * same web-registry / worker-runtime split — handler guards if missing.
    */
-  deriveEvents: (params: {
-    tenantId: string;
-    traceId: string;
-    occurredAtMs?: number;
-    foldVersion?: number;
-  }) => Promise<DerivedTraceEvent[]>;
+  triggerDebounceQueue?: EventSourcedQueueProcessor<TriggerMatchRequest>;
 }
 
 /**
- * Evaluates user-defined triggers that include evaluation filters.
+ * Evaluation-pipeline reactor that schedules trigger matching when
+ * evaluations complete.
  *
- * Fires on the evaluation-processing pipeline after an evaluation completes.
- * For each active trigger with evaluation filters:
- *   1. Cross-reads the trace fold state to check trace-level filters
- *   2. Loads all completed evaluations for the trace
- *   3. Matches evaluation filters against the full set of evaluations
- *   4. Dispatches the configured action if all filters pass
+ * Fires on the evaluation-processing pipeline after an evaluation
+ * completes. For each active trigger WITH evaluation filters (the
+ * trace pipeline owns the trace-only ones), the reactor enqueues a
+ * debounced match request. The GroupQueue's Debounce Mode dedup
+ * collapses repeats on `(projectId, triggerId, traceId)` onto one
+ * pending job — so a trace receiving multiple evaluations only runs
+ * the matcher once, after the eval stream goes quiet for the
+ * trigger's `traceDebounceMs`.
  *
- * This complements the alertTrigger reactor on the trace pipeline, which
- * handles triggers with only trace-level filters.
+ * No filter eval, no trace fold cross-read, no dispatch here — all
+ * of that moved into the matcher so the verdict is made against a
+ * settled state. See ADR-030.
  */
 export function createEvaluationAlertTriggerReactor(
   deps: EvaluationAlertTriggerReactorDeps,
@@ -77,7 +63,7 @@ export function createEvaluationAlertTriggerReactor(
       event: EvaluationProcessingEvent,
       context: ReactorContext<EvaluationRunData>,
     ): Promise<void> {
-      // Only fire on terminal evaluation events
+      // Only fire on terminal evaluation events.
       if (
         !isEvaluationCompletedEvent(event) &&
         !isEvaluationReportedEvent(event)
@@ -87,7 +73,7 @@ export function createEvaluationAlertTriggerReactor(
 
       const { tenantId, foldState: evalRun } = context;
 
-      // Guard: skip non-terminal statuses (fold may still be in_progress)
+      // Guard: skip non-terminal statuses (fold may still be in_progress).
       if (
         evalRun.status !== "processed" &&
         evalRun.status !== "error" &&
@@ -96,114 +82,49 @@ export function createEvaluationAlertTriggerReactor(
         return;
       }
 
-      // Guard: must have a traceId to check trace filters and dispatch actions
+      // Guard: must have a traceId for the (trigger, trace) dedup key.
       if (!evalRun.traceId) return;
 
       const traceId = evalRun.traceId;
 
-      // Guard: skip old evaluations (resyncing)
+      // Guard: skip old evaluations (resyncing).
       if (event.occurredAt < Date.now() - 60 * 60 * 1000) return;
+
+      if (!deps.triggerDebounceQueue) {
+        logger.warn(
+          { tenantId, traceId },
+          "Trigger debounce queue not wired — skipping (web-only registration?)",
+        );
+        return;
+      }
 
       const triggers =
         await deps.triggers.getActiveTraceTriggersForProject(tenantId);
       if (triggers.length === 0) return;
 
-      // Filter to triggers that have evaluation filters
-      const triggersWithEvalFilters = triggers.filter((t) => {
-        const { hasEvaluationFilters } = classifyTriggerFilters(t.filters);
-        return hasEvaluationFilters;
-      });
-      if (triggersWithEvalFilters.length === 0) return;
-
-      // Cross-pipeline read: get the trace fold state
-      const brandedTenantId = createTenantId(tenantId);
-      const traceSummary = await deps.traceSummaryStore.get(traceId, {
-        tenantId: brandedTenantId,
-        aggregateId: traceId,
-      });
-
-      if (!traceSummary) {
-        logger.debug(
-          { tenantId, traceId, evaluationId: evalRun.evaluationId },
-          "Trace summary not found for evaluation alert trigger",
-        );
-        return;
-      }
-
-      // Load all evaluations for this trace
-      const allEvaluations = await deps.evaluationRuns.findByTraceId(
-        tenantId,
-        traceId,
+      const candidates = triggers.filter(
+        (t: TriggerSummary) => classifyTriggerFilters(t.filters).hasEvaluationFilters,
       );
 
-      // Derive the trace-level events list only if one of these triggers filters
-      // on event fields (the trace-level half of its filter set).
-      const needsEvents = triggersWithEvalFilters.some((t) =>
-        triggerFiltersReferenceEvents(classifyTriggerFilters(t.filters).traceFilters),
-      );
-      const events = needsEvents
-        ? await deps.deriveEvents({
-            tenantId,
-            traceId,
-            occurredAtMs: traceSummary.occurredAt,
-            foldVersion: traceSummary.spanCount,
-          })
-        : null;
-
-      const traceData = buildPreconditionTraceDataFromFoldState(
-        traceSummary,
-        events,
-      );
-
-      for (const trigger of triggersWithEvalFilters) {
+      const queue = deps.triggerDebounceQueue;
+      for (const trigger of candidates) {
         try {
-          const { traceFilters, evaluationFilters } =
-            classifyTriggerFilters(trigger.filters);
-
-          // Check trace-level filters first (cheaper)
-          if (
-            Object.keys(traceFilters).length > 0 &&
-            !matchesTriggerFilters(traceData, traceFilters)
-          ) {
-            continue;
-          }
-
-          // Check evaluation filters against all evaluations for this trace
-          if (!matchesEvaluationFilters(allEvaluations, evaluationFilters)) {
-            continue;
-          }
-
-          // Atomic claim: see alertTrigger.reactor.ts for rationale.
-          const claimed = await deps.triggers.claimSend({
-            triggerId: trigger.id,
-            traceId,
+          await enqueueTriggerMatch({
+            queue,
             projectId: tenantId,
-          });
-          if (!claimed) continue;
-
-          await dispatchTriggerAction({
-            deps,
             trigger,
             traceId,
-            tenantId,
-            foldState: traceSummary,
           });
         } catch (error) {
-          // A failed dispatch now throws (DispatchError) rather than being
-          // swallowed; surface its retryable classification for operators. The
-          // claim already landed, so the in-line path does not retry — the
-          // outbox migration is what adds durable retry.
-          const retryable = isDispatchError(error) ? error.retryable : undefined;
           logger.error(
             {
               tenantId,
               traceId,
               triggerId: trigger.id,
               evaluationId: evalRun.evaluationId,
-              retryable,
               error: error instanceof Error ? error.message : String(error),
             },
-            "Failed to evaluate trigger on evaluation completion",
+            "Failed to enqueue trigger match (eval pipeline)",
           );
           captureException(error, {
             extra: {
@@ -211,8 +132,6 @@ export function createEvaluationAlertTriggerReactor(
               traceId,
               triggerId: trigger.id,
               evaluationId: evalRun.evaluationId,
-              triggerAction: trigger.action,
-              retryable,
             },
           });
         }

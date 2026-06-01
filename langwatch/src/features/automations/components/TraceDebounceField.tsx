@@ -2,13 +2,13 @@ import { createListCollection, Field, Text } from "@chakra-ui/react";
 import { useMemo } from "react";
 import { Select } from "~/components/ui/select";
 import {
-  EVALUATION_DEBOUNCE_OPTIONS_MS,
-  type EvaluationDebounceOptionMs,
+  TRACE_DEBOUNCE_OPTIONS_MS,
+  type TraceDebounceOptionMs,
 } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 import { useAutomationStore } from "../state/automationStore";
 import { useDraft } from "../state/selectors";
 
-const DEBOUNCE_LABELS: Record<EvaluationDebounceOptionMs, string> = {
+const DEBOUNCE_LABELS: Record<TraceDebounceOptionMs, string> = {
   0: "Off (evaluate on every span)",
   15_000: "15 seconds",
   30_000: "30 seconds",
@@ -19,7 +19,7 @@ const DEBOUNCE_LABELS: Record<EvaluationDebounceOptionMs, string> = {
 
 // Stored as ms internally; the Chakra Select API works with strings, so we
 // pivot through the numeric value's string form at the boundary.
-const DEBOUNCE_OPTIONS = EVALUATION_DEBOUNCE_OPTIONS_MS.map((value) => ({
+const DEBOUNCE_OPTIONS = TRACE_DEBOUNCE_OPTIONS_MS.map((value) => ({
   value: String(value),
   label: DEBOUNCE_LABELS[value],
 }));
@@ -31,7 +31,7 @@ const DEBOUNCE_OPTIONS = EVALUATION_DEBOUNCE_OPTIONS_MS.map((value) => ({
  * silently. Required field; the non-zero default lives in
  * `INITIAL_DRAFT` and the router's create path.
  */
-export function EvaluationDebounceField() {
+export function TraceDebounceField() {
   const draft = useDraft();
   const dispatch = useAutomationStore((s) => s.dispatch);
 
@@ -45,21 +45,21 @@ export function EvaluationDebounceField() {
       <Field.Label>Wait for trace to settle</Field.Label>
       <Select.Root
         collection={collection}
-        value={[String(draft.evaluationDebounceMs)]}
+        value={[String(draft.traceDebounceMs)]}
         onValueChange={({ value }) => {
           const next = value[0];
           if (next === undefined) return;
           const parsed = Number(next);
           if (
-            !(EVALUATION_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(
+            !(TRACE_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(
               parsed,
             )
           ) {
             return;
           }
           dispatch({
-            type: "SET_EVALUATION_DEBOUNCE",
-            value: parsed as EvaluationDebounceOptionMs,
+            type: "SET_TRACE_DEBOUNCE",
+            value: parsed as TraceDebounceOptionMs,
           });
         }}
       >
@@ -75,7 +75,7 @@ export function EvaluationDebounceField() {
         </Select.Content>
       </Select.Root>
       <Text textStyle="xs" color="fg.muted" mt={1}>
-        {draft.evaluationDebounceMs === 0
+        {draft.traceDebounceMs === 0
           ? "Fires as soon as filters match — risks dispatching from a half-formed trace."
           : "Waits for the trace to be quiet this long before evaluating filters."}
       </Text>

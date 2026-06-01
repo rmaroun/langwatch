@@ -29,10 +29,10 @@ import {
 import { api } from "~/utils/api";
 import { isHandledByGlobalHandler } from "~/utils/trpcError";
 import {
-  DEFAULT_EVALUATION_DEBOUNCE_MS,
-  EVALUATION_DEBOUNCE_OPTIONS_MS,
+  DEFAULT_TRACE_DEBOUNCE_MS,
+  TRACE_DEBOUNCE_OPTIONS_MS,
   NOTIFICATION_CADENCES,
-  type EvaluationDebounceOptionMs,
+  type TraceDebounceOptionMs,
   type NotificationCadence,
 } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 import { MainSectionList } from "./components/MainSectionList";
@@ -156,11 +156,11 @@ export function AutomationDrawer({
       // Defensive narrow on debounce too — a future option not yet in the
       // UI's allowed set falls back to the safe non-zero default rather
       // than 0, since 0 is the unsafe legacy mode (ADR-030).
-      evaluationDebounceMs: (
-        EVALUATION_DEBOUNCE_OPTIONS_MS as readonly number[]
-      ).includes(row.evaluationDebounceMs)
-        ? (row.evaluationDebounceMs as EvaluationDebounceOptionMs)
-        : DEFAULT_EVALUATION_DEBOUNCE_MS,
+      traceDebounceMs: (
+        TRACE_DEBOUNCE_OPTIONS_MS as readonly number[]
+      ).includes(row.traceDebounceMs)
+        ? (row.traceDebounceMs as TraceDebounceOptionMs)
+        : DEFAULT_TRACE_DEBOUNCE_MS,
       slices: {
         ...INITIAL_DRAFT.slices,
         [action]: provider.client.fromTriggerRow({
@@ -363,7 +363,7 @@ export function AutomationDrawer({
         actionParams: actionParamsFromDraft(draft) as never,
         templates: templatesFromDraft(draft),
         notificationCadence: draft.notificationCadence,
-        evaluationDebounceMs: draft.evaluationDebounceMs,
+        traceDebounceMs: draft.traceDebounceMs,
       },
       {
         onSuccess: () => {

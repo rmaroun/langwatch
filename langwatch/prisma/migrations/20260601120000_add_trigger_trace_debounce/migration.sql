@@ -1,5 +1,5 @@
--- Per-trigger evaluation debounce. The reactor evaluates filters and
--- dispatches only after `evaluationDebounceMs` of silence on the trace,
+-- Per-trigger trace-readiness debounce. The trigger matcher runs filters
+-- and dispatches only after `traceDebounceMs` of silence on the trace,
 -- so partially-assembled traces do not produce half-formed dispatch.
 --
 -- See dev/docs/adr/030-trace-readiness-debounce-for-trigger-evaluation.md.
@@ -11,7 +11,7 @@
 -- automation drawer.
 
 -- AlterTable
-ALTER TABLE "Trigger" ADD COLUMN "evaluationDebounceMs" INTEGER NOT NULL DEFAULT 30000;
+ALTER TABLE "Trigger" ADD COLUMN "traceDebounceMs" INTEGER NOT NULL DEFAULT 30000;
 
 -- To roll back, uncomment and run manually:
--- ALTER TABLE "Trigger" DROP COLUMN "evaluationDebounceMs";
+-- ALTER TABLE "Trigger" DROP COLUMN "traceDebounceMs";

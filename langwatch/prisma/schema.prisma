@@ -711,7 +711,7 @@ model Trigger {
   // Per-trigger trace-readiness debounce in ms; see ADR-030. Filter
   // evaluation waits for this many ms of silence on the (trigger, trace)
   // pair before running. 0 disables (legacy eager evaluation).
-  evaluationDebounceMs Int           @default(30000)
+  traceDebounceMs Int           @default(30000)
   TriggerSent   TriggerSent[]
   customGraphId String?       @unique
   customGraph   CustomGraph?  @relation(fields: [customGraphId], references: [id], onDelete: Cascade)

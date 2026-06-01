@@ -9,7 +9,7 @@ import {
   useSummariseConditions,
 } from "../state/selectors";
 import { CadenceField } from "./CadenceField";
-import { EvaluationDebounceField } from "./EvaluationDebounceField";
+import { TraceDebounceField } from "./TraceDebounceField";
 import { IdentityFields } from "./IdentityFields";
 import { SectionRow } from "./SectionRow";
 import { TestFireSection } from "./TestFireSection";
@@ -79,7 +79,7 @@ export function MainSectionList({
         disabled={!draft.action}
         onClick={() => setSection("configuration")}
       />
-      <EvaluationDebounceField />
+      <TraceDebounceField />
       <CadenceField />
       <TestFireSection loading={testFireLoading} onFire={onTestFire} />
     </VStack>

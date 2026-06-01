@@ -12,7 +12,7 @@ import {
 import type { Monitor, TriggerAction } from "@prisma/client";
 import { Bell, Edit2, Filter, MoreVertical, Plus, Trash } from "react-feather";
 import { CLIENT_PROVIDERS } from "~/automations/providers/client";
-import { EVALUATION_DEBOUNCE_OPTIONS_MS } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
+import { TRACE_DEBOUNCE_OPTIONS_MS } from "~/server/event-sourcing/pipelines/shared/triggerActionDispatch";
 import { HoverableBigText } from "~/components/HoverableBigText";
 import { NoDataInfoBlock } from "~/components/NoDataInfoBlock";
 import { FilterDisplay } from "~/components/automations/FilterDisplay";
@@ -39,7 +39,7 @@ const DEBOUNCE_LABEL_BY_MS: Record<number, string> = {
 };
 
 function debounceLabel(ms: number): string {
-  if ((EVALUATION_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(ms)) {
+  if ((TRACE_DEBOUNCE_OPTIONS_MS as readonly number[]).includes(ms)) {
     return DEBOUNCE_LABEL_BY_MS[ms] ?? `${Math.round(ms / 1000)}s`;
   }
   return `${Math.round(ms / 1000)}s`;
@@ -326,7 +326,7 @@ function Automations() {
                         </VStack>
                       </Table.Cell>
                       <Table.Cell whiteSpace="nowrap">
-                        {debounceLabel(trigger.evaluationDebounceMs)}
+                        {debounceLabel(trigger.traceDebounceMs)}
                       </Table.Cell>
                       <Table.Cell whiteSpace="nowrap">
                         {formatTimeAgo(trigger.lastRunAt)}

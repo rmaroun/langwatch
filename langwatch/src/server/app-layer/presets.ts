@@ -5,6 +5,7 @@ import { getClickHouseClientForProject, isClickHouseEnabled, type ClickHouseClie
 import { esClient, TRACE_INDEX, traceIndexId } from "../elasticsearch";
 import { EventSourcing } from "../event-sourcing";
 import { setupOutbox } from "../event-sourcing/outbox/setup";
+import { setupTriggerDebounce } from "../event-sourcing/outbox/triggerDebounce/setup";
 import { PipelineRegistry, type AppCommands } from "../event-sourcing/pipelineRegistry";
 import type { ScenarioExecutionReactorHandle } from "../event-sourcing/pipelines/simulation-processing/reactors/scenarioExecution.reactor";
 import { App, getApp, globalForApp, initializeApp } from "./app";
@@ -398,22 +399,48 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
       }
     : undefined;
 
-  // Outbox stack (ADR-021/025): produces dispatch rows for notify-class
-  // triggers and drains them as digests per cadence window. Both
-  // production and consumption live on the worker — reactors only
-  // run there, so the web process has no need for the stack. Leaving
-  // the stack undefined on web means dispatchTriggerAction falls
-  // through to its legacy inline path on a web-side caller, which is
-  // the safe default.
-  const outboxStack =
+  // Trigger pipeline runtime (worker-only):
+  //   - outbox stack: digest dispatch for notify-class actions (ADR-025)
+  //   - trigger-debounce queue: trace-readiness debounce for matching (ADR-030)
+  //
+  // Both have identical lifecycle (Redis-backed on worker, absent on web
+  // and on tests), so they're constructed together and bundled into one
+  // `triggerRuntime` field passed to the registry. The web process gets
+  // `undefined` and both paths gracefully no-op.
+  const triggerRuntime =
     config.processRole === "worker"
-      ? setupOutbox({
-          prisma,
-          redis: redis ?? null,
-          processRole: config.processRole,
-          triggers,
-          projects,
-        })
+      ? (() => {
+          const outboxStack = setupOutbox({
+            prisma,
+            redis: redis ?? null,
+            processRole: config.processRole,
+            triggers,
+            projects,
+          });
+          const triggerNotify = {
+            queue: outboxStack.triggerNotifyQueue,
+            auditAdapter: outboxStack.auditAdapter,
+          };
+          const debounceStack = setupTriggerDebounce({
+            prisma,
+            redis: redis ?? null,
+            processRole: config.processRole,
+            triggers,
+            projects,
+            evaluations: { runs: evaluations.runs },
+            traces: { spans: spanStorage },
+            traceSummaryRepository: repositories.traceSummaryFold,
+            triggerNotify,
+          });
+          return {
+            triggerNotify,
+            debounceQueue: debounceStack.queue,
+            closeables: [
+              { name: "outbox-dispatch-queue", close: () => outboxStack.triggerNotifyQueue.close() },
+              { name: "trigger-debounce-queue", close: () => debounceStack.queue.close() },
+            ],
+          };
+        })()
       : undefined;
 
   const registry = new PipelineRegistry({
@@ -435,10 +462,10 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
     gatewayBudgetSync,
     governanceKpisSync,
     governanceOcsfEventsSync,
-    triggerNotify: outboxStack
+    triggerRuntime: triggerRuntime
       ? {
-          queue: outboxStack.triggerNotifyQueue,
-          auditAdapter: outboxStack.auditAdapter,
+          triggerNotify: triggerRuntime.triggerNotify,
+          debounceQueue: triggerRuntime.debounceQueue,
         }
       : undefined,
   });
@@ -511,11 +538,10 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
       await broadcast.close();
     },
   });
-  if (outboxStack) {
-    gracefulCloseables.push({
-      name: "outbox-dispatch-queue",
-      close: () => outboxStack.triggerNotifyQueue.close(),
-    });
+  if (triggerRuntime) {
+    for (const c of triggerRuntime.closeables) {
+      gracefulCloseables.push(c);
+    }
   }
   gracefulCloseables.push({
     name: "prisma",
