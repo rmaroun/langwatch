@@ -166,6 +166,10 @@ const routes: RouteObject[] = [
     ...page(() => import("./pages/settings/teams/[team]")),
   },
   {
+    path: "/settings/topic-clustering",
+    ...page(() => import("./pages/settings/topic-clustering")),
+  },
+  {
     path: "/settings/usage",
     ...page(() => import("./pages/settings/usage")),
   },

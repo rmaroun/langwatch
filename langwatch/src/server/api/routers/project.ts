@@ -447,6 +447,29 @@ export const projectRouter = createTRPCRouter({
       });
       return { success: true, alreadyArchived: result.count === 0 };
     }),
+
+  triggerTopicClustering: protectedProcedure
+    .input(z.object({ projectId: z.string() }))
+    .use(checkProjectPermission("project:update"))
+    .mutation(async ({ input }) => {
+      const { scheduleTopicClusteringForProject } = await import(
+        "../../topicClustering/topicClusteringQueue"
+      );
+      try {
+        await scheduleTopicClusteringForProject(input.projectId, true);
+        return {
+          success: true,
+          message: "Topic clustering job queued successfully",
+        };
+      } catch (error) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Failed to trigger topic clustering: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+        });
+      }
+    }),
 });
 
 async function checkCapturedDataVisibilityPermission({

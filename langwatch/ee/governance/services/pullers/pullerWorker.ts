@@ -36,7 +36,7 @@ import { connection, makeQueueName } from "~/server/redis";
 import { createLogger } from "~/utils/logger/server";
 import { captureException, withScope } from "~/utils/posthogErrorCapture";
 import { decryptCredentials } from "../activity-monitor/ingestionCredentials";
-import { withJobContext } from "./withJobContext";
+import { withJobContext } from "~/server/queues/withJobContext";
 
 export type IngestionPullerJob = {
   /** IngestionSource id this run targets. */
