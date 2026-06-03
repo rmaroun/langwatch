@@ -1,4 +1,4 @@
-import { ScenarioEventService } from "~/server/scenarios/scenario-event.service";
+import { getApp } from "~/server/app-layer/app";
 import { prisma } from "../db";
 
 export type OnboardingCheckStatus = {
@@ -80,14 +80,8 @@ export class OnboardingChecksService {
         })
       : null;
 
-    const {
-      workflows,
-      customGraphs,
-      datasets,
-      experiments,
-      triggers,
-      team,
-    } = project ?? {};
+    const { workflows, customGraphs, datasets, experiments, triggers, team } =
+      project ?? {};
 
     // Check for simulations (scenario sets in ClickHouse)
     const simulations = await this.getSimulationsCount(projectId);
@@ -115,8 +109,8 @@ export class OnboardingChecksService {
    */
   private async getSimulationsCount(projectId: string): Promise<number> {
     try {
-      const scenarioService = new ScenarioEventService();
-      const scenarioSets = await scenarioService.getScenarioSetsDataForProject({
+      const facade = getApp().simulations.runs;
+      const scenarioSets = await facade.getScenarioSetsData({
         projectId,
       });
       return scenarioSets.length > 0 ? 1 : 0;

@@ -1,3 +1,4 @@
+import { generate } from "@langwatch/ksuid";
 import {
   Prisma,
   type PrismaClient,
@@ -7,10 +8,7 @@ import {
   TeamUserRole,
 } from "@prisma/client";
 import { TRPCError } from "@trpc/server";
-import { generate } from "@langwatch/ksuid";
 import { nanoid } from "nanoid";
-import type { Session } from "~/server/auth";
-import { KSUID_RESOURCES } from "~/utils/constants";
 import { z } from "zod";
 import { env } from "~/env.mjs";
 import {
@@ -19,14 +17,16 @@ import {
   publicProcedure,
 } from "~/server/api/trpc";
 import { getApp } from "~/server/app-layer/app";
+import type { Session } from "~/server/auth";
+import { KSUID_RESOURCES } from "~/utils/constants";
 import { encrypt } from "~/utils/encryption";
+import { captureException } from "~/utils/posthogErrorCapture";
 import { slugify } from "~/utils/slugify";
 import { auditLog } from "../../auditLog";
 import {
   createLicenseEnforcementService,
   LimitExceededError,
 } from "../../license-enforcement";
-import { captureException } from "~/utils/posthogErrorCapture";
 import { generateApiKey } from "../../utils/apiKeyGenerator";
 import {
   checkOrganizationPermission,
@@ -116,7 +116,6 @@ export const projectRouter = createTRPCRouter({
     .mutation(async ({ input, ctx }) => {
       const userId = ctx.session.user.id;
       const prisma = ctx.prisma;
-
 
       const enforcement = createLicenseEnforcementService(prisma);
       try {
@@ -377,8 +376,7 @@ export const projectRouter = createTRPCRouter({
             input.capturedOutputVisibility ?? project.capturedOutputVisibility,
           traceSharingEnabled:
             input.traceSharingEnabled ?? project.traceSharingEnabled,
-          presenceEnabled:
-            input.presenceEnabled ?? project.presenceEnabled,
+          presenceEnabled: input.presenceEnabled ?? project.presenceEnabled,
           s3Endpoint: input.s3Endpoint ? encrypt(input.s3Endpoint) : null,
           s3AccessKeyId: input.s3AccessKeyId
             ? encrypt(input.s3AccessKeyId)
@@ -449,32 +447,6 @@ export const projectRouter = createTRPCRouter({
       });
       return { success: true, alreadyArchived: result.count === 0 };
     }),
-
-  triggerTopicClustering: protectedProcedure
-    .input(z.object({ projectId: z.string() }))
-    .use(checkProjectPermission("project:update"))
-    .mutation(async ({ input }) => {
-      const { projectId } = input;
-      const { scheduleTopicClusteringForProject } =
-        await import("../../background/queues/topicClusteringQueue");
-
-      try {
-        // Add the job directly to the queue for immediate processing
-        await scheduleTopicClusteringForProject(projectId, true); // true for manual trigger
-
-        return {
-          success: true,
-          message: "Topic clustering job queued successfully",
-        };
-      } catch (error) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `Failed to trigger topic clustering: ${
-            error instanceof Error ? error.message : "Unknown error"
-          }`,
-        });
-      }
-    }),
 });
 
 async function checkCapturedDataVisibilityPermission({
@@ -505,5 +477,3 @@ async function checkCapturedDataVisibilityPermission({
   }
   return next();
 }
-
-

@@ -1,14 +1,14 @@
 import {
-  type PrismaClient,
   OrganizationUserRole,
+  type PrismaClient,
   ProjectSensitiveDataVisibilityLevel,
   RoleBindingScopeType,
   TeamUserRole,
 } from "@prisma/client";
-import type { Session } from "~/server/auth";
-import type { Protections } from "../elasticsearch/protections";
-import { hasProjectPermission, isDemoProject } from "./rbac";
 import { getApp } from "~/server/app-layer/app";
+import type { Session } from "~/server/auth";
+import type { Protections } from "../traces/protections";
+import { hasProjectPermission, isDemoProject } from "./rbac";
 
 export const extractCheckKeys = (
   inputObject: Record<string, any>,

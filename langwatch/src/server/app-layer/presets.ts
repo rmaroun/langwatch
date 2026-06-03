@@ -2,7 +2,6 @@ import type { PrismaClient } from "@prisma/client";
 import type { ClickHouseClient } from "@clickhouse/client";
 import { prisma as globalPrisma } from "~/server/db";
 import { getClickHouseClientForProject, isClickHouseEnabled, type ClickHouseClientResolver } from "~/server/clickhouse/clickhouseClient";
-import { esClient, TRACE_INDEX, traceIndexId } from "../elasticsearch";
 import { EventSourcing } from "../event-sourcing";
 import { PipelineRegistry, type AppCommands } from "../event-sourcing/pipelineRegistry";
 import type { ScenarioExecutionReactorHandle } from "../event-sourcing/pipelines/simulation-processing/reactors/scenarioExecution.reactor";
@@ -482,7 +481,6 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
     organizations,
     traces: { summary: traceSummary, spans: spanStorage },
     evaluations: { runs: evaluations.runs, execution: evaluations.execution },
-    esSync: { esClient, traceIndex: TRACE_INDEX, traceIndexId, prisma },
     costRecorder: new PrismaEvaluationCostRecorder(prisma),
     billingCheckpoints: new PrismaBillingCheckpointService(prisma),
     usageReportingService,

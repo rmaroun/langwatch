@@ -1,13 +1,12 @@
 import type { PrismaClient } from "@prisma/client";
 import { getLangWatchTracer } from "langwatch";
 import { prisma as defaultPrisma } from "~/server/db";
-import type { Protections } from "~/server/elasticsearch/protections";
-import { mapTraceEvaluationsToLegacyEvaluations } from "~/server/evaluations/evaluation-run.mappers";
 import { EvaluationService } from "~/server/evaluations/evaluation.service";
+import { mapTraceEvaluationsToLegacyEvaluations } from "~/server/evaluations/evaluation-run.mappers";
 import type { Evaluation, Trace } from "~/server/tracer/types";
+import type { Protections } from "~/server/traces/protections";
 import { createLogger } from "~/utils/logger/server";
 import { ClickHouseTraceService } from "./clickhouse-trace.service";
-import { ElasticsearchTraceService } from "./elasticsearch-trace.service";
 
 /**
  * Minimum prefix length we will attempt to resolve. Shorter strings fall
@@ -69,6 +68,7 @@ export class AmbiguousTraceIdPrefixError extends Error {
  * short-circuit to 404 without scanning.
  */
 const HEX_ONLY = /^[0-9a-f]+$/i;
+
 import type {
   AggregationFiltersInput,
   CustomersAndLabelsResult,
@@ -94,12 +94,10 @@ export class TraceService {
   private readonly tracer = getLangWatchTracer("langwatch.traces.service");
   private readonly logger = createLogger("langwatch:traces:service");
   private readonly clickHouseService: ClickHouseTraceService;
-  private readonly elasticsearchService: ElasticsearchTraceService;
   private readonly evaluationService: EvaluationService;
 
   constructor(readonly prisma: PrismaClient) {
     this.clickHouseService = ClickHouseTraceService.create(prisma);
-    this.elasticsearchService = ElasticsearchTraceService.create(prisma);
     this.evaluationService = EvaluationService.create(prisma);
   }
 
@@ -156,17 +154,18 @@ export class TraceService {
           HEX_ONLY.test(traceId)
         ) {
           const now = Date.now();
-          const candidates = await this.clickHouseService.resolveTraceIdByPrefix(
-            {
+          const candidates =
+            await this.clickHouseService.resolveTraceIdByPrefix({
               projectId,
               prefix: traceId,
               occurredAt: {
-                from: now - TRACE_ID_PREFIX_LOOKUP_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+                from:
+                  now -
+                  TRACE_ID_PREFIX_LOOKUP_WINDOW_DAYS * 24 * 60 * 60 * 1000,
                 to: now,
               },
               limit: TRACE_ID_PREFIX_CANDIDATE_LIMIT,
-            },
-          );
+            });
           if (candidates === null) {
             throw new Error(
               "ClickHouse is enabled but returned null for resolveTraceIdByPrefix — check ClickHouse client configuration",
@@ -478,12 +477,11 @@ export class TraceService {
       async (span) => {
         span.setAttribute("backend", "clickhouse");
 
-        const result =
-          await this.clickHouseService.getDistinctFieldNames(
-            projectId,
-            startDate,
-            endDate,
-          );
+        const result = await this.clickHouseService.getDistinctFieldNames(
+          projectId,
+          startDate,
+          endDate,
+        );
         if (result === null) {
           throw new Error(
             "ClickHouse is enabled but returned null for getDistinctFieldNames — check ClickHouse client configuration",

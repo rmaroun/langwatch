@@ -1,10 +1,10 @@
 import { env } from "~/env.mjs";
+import { featureFlagService } from "~/server/featureFlag";
 import {
   batchPresidioClearPII as defaultBatchPresidioClearPII,
   googleDLPClearPII,
   type PIICheckOptions,
-} from "~/server/background/workers/collector/piiCheck";
-import { featureFlagService } from "~/server/featureFlag";
+} from "~/server/tracer/collector/piiCheck";
 import { createLogger } from "~/utils/logger/server";
 import {
   DEFAULT_PII_REDACTION_LEVEL,

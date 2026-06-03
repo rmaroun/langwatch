@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Protections } from "~/server/elasticsearch/protections";
+import type { Protections } from "~/server/traces/protections";
 import type { GetAllTracesForProjectInput } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -21,13 +21,12 @@ vi.mock("~/server/db", () => ({
 
 vi.mock("langwatch", () => ({
   getLangWatchTracer: () => ({
-    withActiveSpan: (
-      _name: string,
-      ...args: unknown[]
-    ) => {
+    withActiveSpan: (_name: string, ...args: unknown[]) => {
       const fn = args.length === 1 ? args[0] : args[1];
       const span = { setAttribute: () => {} };
-      return (fn as (span: { setAttribute: () => void }) => Promise<unknown>)(span);
+      return (fn as (span: { setAttribute: () => void }) => Promise<unknown>)(
+        span,
+      );
     },
   }),
 }));
@@ -519,7 +518,10 @@ describe("ClickHouseTraceService", () => {
         } as never);
 
         await service.getAllTracesForProject(
-          { ...baseInput, query: "100% success_rate" } as GetAllTracesForProjectInput,
+          {
+            ...baseInput,
+            query: "100% success_rate",
+          } as GetAllTracesForProjectInput,
           protections,
         );
 
@@ -705,9 +707,7 @@ describe("ClickHouseTraceService", () => {
             json: () => Promise.resolve(idRows),
           })
           // summary — OOM
-          .mockRejectedValueOnce(
-            new Error("MEMORY_LIMIT_EXCEEDED"),
-          )
+          .mockRejectedValueOnce(new Error("MEMORY_LIMIT_EXCEEDED"))
           // retry batch 1: traces 0-24
           .mockResolvedValueOnce({
             json: () => Promise.resolve(summaryRows.slice(0, 25)),
@@ -781,10 +781,9 @@ describe("ClickHouseTraceService", () => {
           })
           // evaluations — OOM
           .mockRejectedValueOnce(
-            Object.assign(
-              new Error("Query memory limit exceeded"),
-              { type: "MEMORY_LIMIT_EXCEEDED" },
-            ),
+            Object.assign(new Error("Query memory limit exceeded"), {
+              type: "MEMORY_LIMIT_EXCEEDED",
+            }),
           )
           // evaluations retry batch
           .mockResolvedValueOnce({

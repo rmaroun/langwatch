@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { MaybeStoredLLMModelCost } from "~/server/modelProviders/llmModelCost";
+import { getStaticModelCosts } from "~/server/modelProviders/llmModelCost";
 import {
   matchModelCostWithFallbacks,
   stripProviderSubtype,
-} from "~/server/background/workers/collector/cost";
-import type { MaybeStoredLLMModelCost } from "~/server/modelProviders/llmModelCost";
-import { getStaticModelCosts } from "~/server/modelProviders/llmModelCost";
+} from "~/server/tracer/collector/cost";
 import type { OtlpSpan } from "../../../event-sourcing/pipelines/trace-processing/schemas/otlp";
 import {
   OtlpSpanCostEnrichmentService,
@@ -120,7 +120,9 @@ describe("OtlpSpanCostEnrichmentService", () => {
         await service.enrichSpan(span, "project-1");
 
         const cacheKeys = span.attributes.map((a) => a.key);
-        expect(cacheKeys).not.toContain("langwatch.model.cacheReadCostPerToken");
+        expect(cacheKeys).not.toContain(
+          "langwatch.model.cacheReadCostPerToken",
+        );
         expect(cacheKeys).not.toContain(
           "langwatch.model.cacheCreationCostPerToken",
         );

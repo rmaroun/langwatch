@@ -1,10 +1,10 @@
 import { ATTR_KEYS } from "~/server/app-layer/traces/canonicalisation/extractors/_constants";
+import type { NormalizedAttributes } from "~/server/event-sourcing/pipelines/trace-processing/schemas/spans";
+import { getStaticModelCosts } from "~/server/modelProviders/llmModelCost";
 import {
   estimateCost,
   matchModelCostWithFallbacks,
-} from "~/server/background/workers/collector/cost";
-import type { NormalizedAttributes } from "~/server/event-sourcing/pipelines/trace-processing/schemas/spans";
-import { getStaticModelCosts } from "~/server/modelProviders/llmModelCost";
+} from "~/server/tracer/collector/cost";
 import { coerceToNumber } from "~/utils/coerceToNumber";
 
 /**
@@ -39,9 +39,8 @@ export function computeSpanCost({
   );
   const cacheCreationTokens = Math.max(
     0,
-    coerceToNumber(
-      attrs[ATTR_KEYS.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS],
-    ) ?? 0,
+    coerceToNumber(attrs[ATTR_KEYS.GEN_AI_USAGE_CACHE_CREATION_INPUT_TOKENS]) ??
+      0,
   );
 
   // Priority 1: Custom cost rates from enrichment. A custom cost may carry

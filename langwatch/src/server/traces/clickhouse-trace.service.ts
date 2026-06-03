@@ -2,14 +2,14 @@ import type { ClickHouseClient } from "@clickhouse/client";
 import type { PrismaClient } from "@prisma/client";
 import { getLangWatchTracer } from "langwatch";
 import type { TraceWithGuardrail } from "~/components/messages/MessageCard";
+import { LLM_PARAMETER_MAP } from "~/prompts/prompt-playground/llmParameterMap";
 import type { TraceSummaryData } from "~/server/app-layer/traces/types";
 import { getClickHouseClientForProject } from "~/server/clickhouse/clickhouseClient";
 import { prisma as defaultPrisma } from "~/server/db";
-import type { Protections } from "~/server/elasticsearch/protections";
 import {
+  type ClickHouseEvaluationRunRow,
   mapClickHouseEvaluationToTraceEvaluation,
   mapTraceEvaluationsToLegacyEvaluations,
-  type ClickHouseEvaluationRunRow,
 } from "~/server/evaluations/evaluation-run.mappers";
 import type {
   NormalizedSpan,
@@ -18,14 +18,14 @@ import type {
 } from "~/server/event-sourcing/pipelines/trace-processing/schemas/spans";
 import { generateClickHouseFilterConditions } from "~/server/filters/clickhouse";
 import type { Span, Trace } from "~/server/tracer/types";
-import { LLM_PARAMETER_MAP } from "~/prompts/prompt-playground/llmParameterMap";
+import type { Protections } from "~/server/traces/protections";
 import { createLogger } from "~/utils/logger/server";
+import { findPromptReferenceInAncestors } from "./findPromptReferenceInAncestors";
 import {
   applyTraceProtections,
   mapNormalizedSpansToSpans,
   mapTraceSummaryToTrace,
 } from "./mappers";
-import { findPromptReferenceInAncestors } from "./findPromptReferenceInAncestors";
 import { parseLLMSpanMessages } from "./parseLLMSpanMessages";
 import { parsePromptReference } from "./parsePromptReference";
 import type {
@@ -1752,7 +1752,7 @@ export class ClickHouseTraceService {
         // around the summaries' OccurredAt range is safe headroom; when no
         // summary row is found we fall back to an unbounded span scan.
         const summaryResult = await clickHouseClient.query({
-            query: `
+          query: `
         SELECT
           TraceId AS ts_TraceId,
           SpanCount AS ts_SpanCount,
@@ -1792,9 +1792,9 @@ export class ClickHouseTraceService {
           )
         ORDER BY t.TraceId
       `,
-            query_params: { tenantId: projectId, traceIds },
-            format: "JSONEachRow",
-          });
+          query_params: { tenantId: projectId, traceIds },
+          format: "JSONEachRow",
+        });
 
         const summaryRows = (await summaryResult.json()) as TraceSummaryRow[];
 
@@ -1827,7 +1827,7 @@ export class ClickHouseTraceService {
           : {};
 
         const spansResult = await clickHouseClient.query({
-            query: `
+          query: `
         SELECT
           SpanId,
           TraceId,
@@ -1868,9 +1868,9 @@ export class ClickHouseTraceService {
         ORDER BY t.TraceId, t.StartTime ASC
         LIMIT 200 BY t.TraceId
       `,
-            query_params: { tenantId: projectId, traceIds, ...spanTimeParams },
-            format: "JSONEachRow",
-          });
+          query_params: { tenantId: projectId, traceIds, ...spanTimeParams },
+          format: "JSONEachRow",
+        });
 
         // Parse spans
         type SpanRow = {
@@ -2142,7 +2142,8 @@ export class ClickHouseTraceService {
       durationMs: row.DurationMs,
       name: row.SpanName,
       kind: row.SpanKind as NormalizedSpanKind,
-      resourceAttributes: row.ResourceAttributes as NormalizedSpan["resourceAttributes"],
+      resourceAttributes:
+        row.ResourceAttributes as NormalizedSpan["resourceAttributes"],
       spanAttributes: row.SpanAttributes as NormalizedSpan["spanAttributes"],
       statusCode: row.StatusCode as NormalizedStatusCode | null,
       statusMessage: row.StatusMessage,
@@ -2311,9 +2312,7 @@ function findNearestLlm<T extends PromptStudioCandidateRow>(
 /**
  * Transform traces to include guardrail information
  */
-function transformTracesWithGuardrails(
-  traces: Trace[],
-): TraceWithGuardrail[] {
+function transformTracesWithGuardrails(traces: Trace[]): TraceWithGuardrail[] {
   return traces.map((trace) => {
     return {
       ...trace,
