@@ -79,7 +79,13 @@ export interface FoldProjectionDefinition<
    * need to provide this themselves. Optional at the type level because it's set
    * after construction, but always present at runtime.
    */
-  eventLoader?: (context: { tenantId: string; aggregateId: string }) => Promise<Event[]>;
+  eventLoader?: (context: {
+    tenantId: string;
+    aggregateId: string;
+    /** occurredAt (ms) of the event that triggered the re-fold, used to
+     * lower-bound the event_log rehydration scan for time-local aggregates. */
+    occurredAtMs?: number;
+  }) => Promise<Event[]>;
 }
 
 /**

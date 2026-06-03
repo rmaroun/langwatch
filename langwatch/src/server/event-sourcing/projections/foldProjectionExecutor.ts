@@ -60,6 +60,8 @@ export class FoldProjectionExecutor {
       const allEvents = await projection.eventLoader({
         tenantId: context.tenantId,
         aggregateId: context.aggregateId,
+        occurredAtMs:
+          typeof eventOccurredAt === "number" ? eventOccurredAt : undefined,
       });
 
       logger.info(
@@ -139,6 +141,10 @@ export class FoldProjectionExecutor {
       const allEvents = await projection.eventLoader({
         tenantId: context.tenantId,
         aggregateId: context.aggregateId,
+        occurredAtMs:
+          typeof earliestOccurredAt === "number"
+            ? earliestOccurredAt
+            : undefined,
       });
       logger.info(
         {

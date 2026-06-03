@@ -139,7 +139,13 @@ export abstract class AbstractFoldProjection<
    * Loads all events for an aggregate, sorted by occurredAt ASC.
    * When provided, the executor re-folds from scratch if an out-of-order event is detected.
    */
-  eventLoader?: (context: { tenantId: string; aggregateId: string }) => Promise<Event[]>;
+  eventLoader?: (context: {
+    tenantId: string;
+    aggregateId: string;
+    /** occurredAt (ms) of the event that triggered the re-fold, used to
+     * lower-bound the event_log rehydration scan for time-local aggregates. */
+    occurredAtMs?: number;
+  }) => Promise<Event[]>;
 
   /** Lazily-built dispatch map: event type string → handler method name. */
   private _dispatchMap?: Record<string, string>;

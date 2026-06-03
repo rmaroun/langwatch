@@ -71,9 +71,22 @@ export class EventRepositoryClickHouse implements EventRepository {
     tenantId: string,
     aggregateType: string,
     aggregateId: string,
+    occurredAtFromMs?: number,
   ): Promise<EventRecord[]> {
     try {
       const client = await this.getClient(tenantId);
+      // When a lower bound is supplied, add a predicate on EventOccurredAt so
+      // ClickHouse can prune the weekly partitions older than the bound instead
+      // of cold-scanning every partition on S3. Rows with an unknown occurred
+      // time (EventOccurredAt = 0) are always kept so the bound can never drop
+      // an event. EventOccurredAt is UInt64 milliseconds; the table is
+      // PARTITION BY toYearWeek(toDateTime64(EventOccurredAt / 1000, 3)), which
+      // is monotonic in EventOccurredAt so the predicate prunes partitions.
+      const hasLowerBound =
+        typeof occurredAtFromMs === "number" && occurredAtFromMs > 0;
+      const occurredAtFilter = hasLowerBound
+        ? "AND (EventOccurredAt = 0 OR EventOccurredAt >= {occurredAtFromMs:UInt64})"
+        : "";
       const result = await client.query({
         query: `
           SELECT
@@ -88,12 +101,14 @@ export class EventRepositoryClickHouse implements EventRepository {
           WHERE TenantId = {tenantId:String}
             AND AggregateType = {aggregateType:String}
             AND AggregateId = {aggregateId:String}
+            ${occurredAtFilter}
           ORDER BY EventTimestamp ASC, EventId ASC
         `,
         query_params: {
           tenantId,
           aggregateType,
           aggregateId: String(aggregateId),
+          ...(hasLowerBound ? { occurredAtFromMs } : {}),
         },
         format: "JSONEachRow",
       });

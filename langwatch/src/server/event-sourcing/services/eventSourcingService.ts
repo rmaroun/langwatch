@@ -121,11 +121,16 @@ export class EventSourcingService<
         if (!fold.eventLoader && eventStore) {
           const capturedAggregateType = aggregateType;
           const capturedEventStore = eventStore;
-          fold.eventLoader = async (ctx: { tenantId: string; aggregateId: string }) => {
+          fold.eventLoader = async (ctx: {
+            tenantId: string;
+            aggregateId: string;
+            occurredAtMs?: number;
+          }) => {
             const events = await capturedEventStore.getEvents(
               ctx.aggregateId,
               { tenantId: createTenantId(ctx.tenantId) },
               capturedAggregateType,
+              ctx.occurredAtMs,
             );
             return [...events].sort((a, b) => (a.occurredAt ?? 0) - (b.occurredAt ?? 0));
           };
