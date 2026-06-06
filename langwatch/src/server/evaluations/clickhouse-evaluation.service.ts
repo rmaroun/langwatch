@@ -6,42 +6,12 @@ import type { Protections } from "~/server/elasticsearch/protections";
 import { createLogger } from "~/utils/logger/server";
 import { safeJsonParse } from "~/utils/safeJsonParse";
 import type { ClickHouseEvaluationRunRow } from "./evaluation-run.mappers";
-import { mapClickHouseEvaluationToTraceEvaluation } from "./evaluation-run.mappers";
+import {
+  EVALUATION_RUN_COLUMNS_LIGHT,
+  EVALUATION_RUN_COLUMNS_WITH_INPUTS,
+  mapClickHouseEvaluationToTraceEvaluation,
+} from "./evaluation-run.mappers";
 import type { TraceEvaluation } from "./evaluation-run.types";
-
-/**
- * Columns the evaluation mapper actually reads, minus the heavy `Inputs`
- * blob. `evaluation_runs` is `ORDER BY (TenantId, EvaluationId)`, so a
- * `TraceId` filter can't prune granules — ClickHouse reads whole granules
- * to evaluate the predicate, and when `Inputs` holds multi-MB payloads
- * (RAG contexts, full conversations) materialising one granule blows past
- * the per-query memory ceiling. The light projection lets us still return
- * verdicts/scores when the heavy read would OOM.
- */
-const EVAL_COLUMNS_LIGHT = [
-  "ProjectionId",
-  "TenantId",
-  "EvaluationId",
-  "Version",
-  "EvaluatorId",
-  "EvaluatorType",
-  "EvaluatorName",
-  "TraceId",
-  "IsGuardrail",
-  "Status",
-  "Score",
-  "Passed",
-  "Label",
-  "Details",
-  "Error",
-  "ScheduledAt",
-  "StartedAt",
-  "CompletedAt",
-  "LastProcessedEventId",
-  "UpdatedAt",
-].join(", ");
-
-const EVAL_COLUMNS_WITH_INPUTS = `${EVAL_COLUMNS_LIGHT}, Inputs`;
 
 /**
  * ClickHouse raises this when a query would exceed `max_memory_usage`.
@@ -134,7 +104,7 @@ export class ClickHouseEvaluationService {
         };
 
         try {
-          const rows = await runQuery(EVAL_COLUMNS_WITH_INPUTS);
+          const rows = await runQuery(EVALUATION_RUN_COLUMNS_WITH_INPUTS);
           return rows.map(mapClickHouseEvaluationToTraceEvaluation);
         } catch (error) {
           if (isMemoryLimitError(error)) {
@@ -146,7 +116,7 @@ export class ClickHouseEvaluationService {
               "Evaluations read hit the ClickHouse memory limit; retrying without Inputs",
             );
             try {
-              const rows = await runQuery(EVAL_COLUMNS_LIGHT);
+              const rows = await runQuery(EVALUATION_RUN_COLUMNS_LIGHT);
               return rows.map(mapClickHouseEvaluationToTraceEvaluation);
             } catch (retryError) {
               this.logger.error(
@@ -261,7 +231,7 @@ export class ClickHouseEvaluationService {
         };
 
         try {
-          return groupByTrace(await runQuery(EVAL_COLUMNS_WITH_INPUTS));
+          return groupByTrace(await runQuery(EVALUATION_RUN_COLUMNS_WITH_INPUTS));
         } catch (error) {
           if (isMemoryLimitError(error)) {
             // Heavy `Inputs` blobs blew the memory ceiling — retry without
@@ -272,7 +242,7 @@ export class ClickHouseEvaluationService {
               "Evaluations read hit the ClickHouse memory limit; retrying without Inputs",
             );
             try {
-              return groupByTrace(await runQuery(EVAL_COLUMNS_LIGHT));
+              return groupByTrace(await runQuery(EVALUATION_RUN_COLUMNS_LIGHT));
             } catch (retryError) {
               this.logger.error(
                 {

@@ -7,6 +7,7 @@ import { getClickHouseClientForProject } from "~/server/clickhouse/clickhouseCli
 import { prisma as defaultPrisma } from "~/server/db";
 import type { Protections } from "~/server/elasticsearch/protections";
 import {
+  EVALUATION_RUN_COLUMNS_WITH_INPUTS,
   mapClickHouseEvaluationToTraceEvaluation,
   mapTraceEvaluationsToLegacyEvaluations,
   type ClickHouseEvaluationRunRow,
@@ -1554,7 +1555,7 @@ export class ClickHouseTraceService {
     const runQuery = async (ids: string[]) => {
       const result = await clickHouseClient.query({
         query: `
-          SELECT *
+          SELECT ${EVALUATION_RUN_COLUMNS_WITH_INPUTS}
           FROM evaluation_runs
           WHERE TenantId = {tenantId:String}
             AND TraceId IN ({traceIds:Array(String)})
