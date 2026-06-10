@@ -97,8 +97,12 @@ import {
 import { createProjectMetadataReactor } from "./pipelines/trace-processing/reactors/projectMetadata.reactor";
 import { createSimulationMetricsSyncReactor } from "./pipelines/trace-processing/reactors/simulationMetricsSync.reactor";
 import { createSpanStorageBroadcastReactor } from "./pipelines/trace-processing/reactors/spanStorageBroadcast.reactor";
+import { createClaudeCodeSpanSyncReactor } from "./pipelines/trace-processing/reactors/claudeCodeSpanSync.reactor";
 import { createTraceUpdateBroadcastReactor } from "./pipelines/trace-processing/reactors/traceUpdateBroadcast.reactor";
-import type { ResolveOriginCommandData } from "./pipelines/trace-processing/schemas/commands";
+import type {
+  RecordSpanCommandData,
+  ResolveOriginCommandData,
+} from "./pipelines/trace-processing/schemas/commands";
 import type { FoldProjectionStore } from "./projections/foldProjection.types";
 import type { AppendStore } from "./projections/mapProjection.types";
 import { RedisCachedFoldStore } from "./projections/redisCachedFoldStore";
@@ -190,6 +194,13 @@ export interface PipelineRegistryDeps {
   billingCheckpoints: BillingCheckpointService;
   usageReportingService?: UsageReportingService;
   gatewayBudgetSync?: GatewayBudgetSyncReactorDeps;
+  /**
+   * ADR-022: BlobStore for RecordSpanCommand spool reconstitution.
+   * When provided, the trace-processing pipeline wires it into RecordSpanCommand
+   * so oversized commands (> 256 KB) are fetched from S3 and the spool is
+   * best-effort DELETEd after event_log INSERT succeeds.
+   */
+  blobStore?: import("~/server/app-layer/traces/blob-store.service").BlobStore;
   governanceKpisSync?: GovernanceKpisSyncReactorDeps;
   governanceOcsfEventsSync?: GovernanceOcsfEventsSyncReactorDeps;
   retentionPolicyResolver?: RetentionPolicyResolver;
@@ -349,6 +360,11 @@ export class PipelineRegistry {
     const simComputeRunMetrics = new Deferred<
       CommandDispatcher<ComputeRunMetricsCommandData>
     >("simComputeRunMetrics");
+    // recordSpan is a command of the trace pipeline itself, so the claude
+    // span-sync reactor that dispatches it is wired after registration.
+    const recordSpanDispatch = new Deferred<
+      CommandDispatcher<RecordSpanCommandData>
+    >("recordSpan");
 
     const originGateReactor = createOriginGateReactor({
       scheduleDeferred: scheduleDeferred.fn,
@@ -377,6 +393,15 @@ export class PipelineRegistry {
     const spanStorageBroadcastReactor = createSpanStorageBroadcastReactor({
       broadcast: this.deps.broadcast,
       hasRedis: !!this.deps.eventSourcing.redisConnection,
+    });
+
+    const claudeCodeSpanSyncReactor = createClaudeCodeSpanSyncReactor({
+      getMarkedClaudeCodeLogs: (tenantId, traceId) =>
+        this.deps.repositories.logRecordStorage.getMarkedClaudeCodeLogsByTrace(
+          tenantId,
+          traceId,
+        ),
+      recordSpan: recordSpanDispatch.fn,
     });
 
     const projectMetadataReactor = createProjectMetadataReactor({
@@ -451,15 +476,20 @@ export class PipelineRegistry {
         simulationMetricsSyncReactor,
         experimentMetricsSyncReactor,
         spanStorageBroadcastReactor,
+        claudeCodeSpanSyncReactor,
         gatewayBudgetSyncReactor,
+        // ADR-022: Wire BlobStore so RecordSpanCommand can reconstitute
+        // oversized commands and best-effort delete the transient S3 spool.
+        blobStore: this.deps.blobStore,
         governanceKpisSyncReactor,
         governanceOcsfEventsSyncReactor,
       }),
     );
 
-    // Resolve self-referencing command now that the pipeline is registered
+    // Resolve self-referencing commands now that the pipeline is registered
     const traceCommands = mapCommands(tracePipeline.commands);
     resolveOrigin.resolve(traceCommands.resolveOrigin);
+    recordSpanDispatch.resolve(traceCommands.recordSpan);
 
     // Wire the deferred origin resolution queue (BullMQ-backed, survives process restart).
     // After 5 min, dispatches resolveOrigin command → OriginResolvedEvent → fold → reactor.

@@ -1,13 +1,11 @@
 import { Box } from "@chakra-ui/react";
 import { memo } from "react";
+import { IsolatedErrorBoundary } from "~/components/ui/IsolatedErrorBoundary";
 import type {
   SpanTreeNode,
   TraceHeader,
 } from "~/server/api/routers/tracesV2.schemas";
-import { IsolatedErrorBoundary } from "~/components/ui/IsolatedErrorBoundary";
 import { useDrawerStore } from "../../../stores/drawerStore";
-import { useTraceResources } from "../../../hooks/useTraceResources";
-import { ScopeChip } from "../ScopeChip";
 import { SpanTabBar } from "../SpanTabBar";
 import { TraceAccordions } from "../traceAccordions";
 
@@ -22,6 +20,13 @@ interface SpanDetailPaneProps {
    * stacked below, on the left when side-by-side.
    */
   layout: "vertical" | "horizontal";
+  /**
+   * Forwarded to TraceAccordions so it can render a span-shaped
+   * skeleton while the spanTree query is in flight. Without this we'd
+   * fall back to the trace summary on every cold open of the trace
+   * pane — see the comment in TraceAccordions for the full story.
+   */
+  isSpansLoading?: boolean;
 }
 
 /**
@@ -49,11 +54,11 @@ export const SpanDetailPane = memo(function SpanDetailPane({
   spans,
   selectedSpan,
   layout,
+  isSpansLoading,
 }: SpanDetailPaneProps) {
   const selectedSpanId = useDrawerStore((s) => s.selectedSpanId);
   const selectSpan = useDrawerStore((s) => s.selectSpan);
   const collapsed = useDrawerStore((s) => s.paneState.spanDetail.collapsed);
-  const resources = useTraceResources(trace.traceId);
 
   return (
     <Box
@@ -84,7 +89,6 @@ export const SpanDetailPane = memo(function SpanDetailPane({
         >
           <SpanTabBar
             spanTree={spans}
-            rightSlot={<ScopeChip scope={resources.scope} />}
             collapsePosition={layout === "horizontal" ? "leading" : "trailing"}
           />
         </IsolatedErrorBoundary>
@@ -110,6 +114,8 @@ export const SpanDetailPane = memo(function SpanDetailPane({
               spans={spans}
               selectedSpan={selectedSpan}
               activeTab="span"
+              selectedSpanId={selectedSpanId}
+              isSpansLoading={isSpansLoading}
               onSelectSpan={selectSpan}
             />
           </IsolatedErrorBoundary>
@@ -118,4 +124,3 @@ export const SpanDetailPane = memo(function SpanDetailPane({
     </Box>
   );
 });
-

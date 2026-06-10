@@ -44,6 +44,7 @@ import { useFilterStore } from "../../../stores/filterStore";
 import { useFocusSectionStore } from "../../../stores/focusSectionStore";
 import { rankedErrorSpans } from "../../../utils/errorSpans";
 import { ExceptionsContent } from "../ExceptionsContent";
+import { ExtraModelsBadge } from "../../TraceTable/registry/cells/trace/ModelCell";
 import type { PinnedAttribute } from "../../../stores/pinnedAttributesStore";
 import {
   abbreviateModel,
@@ -56,6 +57,9 @@ import {
   STATUS_COLORS,
 } from "../../../utils/formatters";
 import { Chip } from "../Chip";
+import { CostBreakdownTooltipContent } from "../../shared/CostBreakdownTooltip";
+import { TokenBreakdownTooltipContent } from "../../shared/TokenBreakdownTooltip";
+import { TooltipRow } from "../../shared/TooltipRow";
 import { splitChipsForOverflow } from "../ChipBar";
 import { ModeSwitch } from "../ModeSwitch";
 import { RawJsonDialog } from "../RawJsonDialog";
@@ -69,7 +73,6 @@ import {
   renderPinPills,
 } from "./PinStrip";
 import { ThreadProgressIndicator } from "./ThreadProgressIndicator";
-import { TooltipRow } from "./TooltipRow";
 import { TraceOverflowMenu } from "./TraceOverflowMenu";
 import {
   formatPinValue,
@@ -227,11 +230,18 @@ function StatusChip({
 
   const jumpToSpan = useCallback(
     (spanId: string) => {
-      // Land on the span detail tab — `selectSpan` flips activeTab to
-      // "span" internally, so we just ensure trace mode here. The
-      // accordion-side focus-glow observer on SpanAccordions will catch
-      // the follow-up `requestFocus({section: "exceptions"})` fired by
-      // ExceptionsContent and pulse the span's own Exceptions section.
+      // Land on the trace pane with the span selected. `setViewMode`
+      // flips the drawer to the trace-pane layout (PaneLayout); the
+      // SpanDetailPane mounts because `selectedSpanId` is now set, and
+      // the SpanTabBar highlights the selected span. The accordion-side
+      // focus-glow observer on SpanAccordions catches the follow-up
+      // `requestFocus({section: "exceptions"})` fired by
+      // ExceptionsContent and pulses the span's own Exceptions section.
+      //
+      // When the spanTree query is still in flight we'd previously fall
+      // through to the trace summary view; TraceAccordions now renders
+      // a span-shaped skeleton in that window so the jump reads as
+      // "landed, waiting for data" rather than "jump didn't take."
       setViewMode("trace");
       selectSpan(spanId);
     },
@@ -495,19 +505,41 @@ export const DrawerHeader = memo(function DrawerHeader({
     tenantId: project?.id,
   });
 
+  // Cache + reasoning are summed across the trace's spans by the fold and
+  // parked on reserved keys (the raw per-span gen_ai.usage.cache_* values
+  // never reach the trace attribute map). Read the reserved sums first and
+  // fall back to the raw keys for traces folded before the sum landed.
   const cacheReadTokens = readNumberAttribute(
     trace.attributes,
+    "langwatch.reserved.cache_read_tokens",
     "gen_ai.usage.cache_read.input_tokens",
     "gen_ai.usage.cached_tokens",
   );
   const cacheCreationTokens = readNumberAttribute(
     trace.attributes,
+    "langwatch.reserved.cache_creation_tokens",
     "gen_ai.usage.cache_creation.input_tokens",
   );
   const reasoningTokens = readNumberAttribute(
     trace.attributes,
+    "langwatch.reserved.reasoning_tokens",
     "gen_ai.usage.reasoning_tokens",
   );
+
+  // The reasoning EFFORT request setting (low/medium/high/...), lifted onto
+  // the trace summary by the fold. Distinct from the reasoning TOKEN count
+  // above; shown next to the model since it is a per-request model setting.
+  const reasoningEffort =
+    trace.attributes?.["gen_ai.request.reasoning_effort"]?.trim() ?? null;
+
+  // Total tokens the model actually processed = input + output PLUS cache
+  // read + cache write. Anthropic reports `input_tokens` as the NON-cached
+  // portion, so the cache counts are additive, not a subset (which is why a
+  // raw input+output "Total" can sit below the cache rows and read as wrong).
+  // Reasoning is a subset of output, so it is not added again. Falls back to
+  // the server input+output total when no cache was reported.
+  const totalTokensWithCache =
+    trace.totalTokens + (cacheReadTokens ?? 0) + (cacheCreationTokens ?? 0);
 
   // If we have concrete input AND output token numbers to display, trust them
   // and suppress the "estimated" caveat — historical trace summaries can carry
@@ -517,6 +549,16 @@ export const DrawerHeader = memo(function DrawerHeader({
     trace.inputTokens != null &&
     trace.outputTokens != null &&
     (trace.inputTokens > 0 || trace.outputTokens > 0);
+
+  // Billed vs non-billed cost. `totalCost` is the grand list-price cost;
+  // `nonBilledCost` is the bundled (theoretical) portion a coding assistant on
+  // a flat plan never actually pays per token. The pill shows the billed
+  // amount (real spend) so a bundled session doesn't read as huge spend; the
+  // popover breaks down the split.
+  const grandCost = trace.totalCost ?? 0;
+  const nonBilledCost = trace.nonBilledCost ?? 0;
+  const billedCost = Math.max(0, grandCost - nonBilledCost);
+  const isBundledCost = nonBilledCost > 0;
 
   const resources = useTraceResources(trace.traceId);
   const conversationContext = useConversationContext(
@@ -1079,77 +1121,41 @@ export const DrawerHeader = memo(function DrawerHeader({
             </Box>
           </Tooltip>
         )}
-        {(trace.totalCost ?? 0) > 0 && (
+        {grandCost > 0 && (
           <Tooltip
             content={
-              <VStack align="stretch" gap={0.5} minWidth="140px">
-                <TooltipRow
-                  label="Total"
-                  value={formatCost(
-                    trace.totalCost ?? 0,
-                    trace.tokensEstimated,
-                  )}
-                />
-                {trace.tokensEstimated && !hasAuthoritativeTokens && (
-                  <Text textStyle="2xs" color="fg.muted" paddingTop={1}>
-                    Cost is estimated from token counts
-                  </Text>
-                )}
-              </VStack>
+              <CostBreakdownTooltipContent
+                isBundled={isBundledCost}
+                billedCost={billedCost}
+                nonBilledCost={nonBilledCost}
+                grandCost={grandCost}
+                tokensEstimated={trace.tokensEstimated}
+                estimatedNote={trace.tokensEstimated && !hasAuthoritativeTokens}
+              />
             }
             positioning={{ placement: "top" }}
           >
             <Box>
-              <MetricPill
-                label="Cost"
-                value={formatCost(trace.totalCost ?? 0)}
-              />
+              {isBundledCost ? (
+                <MetricPill label="Cost" value="Bundled" tone="purple" />
+              ) : (
+                <MetricPill label="Cost" value={formatCost(billedCost)} />
+              )}
             </Box>
           </Tooltip>
         )}
         {trace.totalTokens > 0 && (
           <Tooltip
             content={
-              <VStack align="stretch" gap={0.5} minWidth="180px">
-                <TooltipRow
-                  label="Input"
-                  value={trace.inputTokens?.toLocaleString() ?? "—"}
-                />
-                <TooltipRow
-                  label="Output"
-                  value={trace.outputTokens?.toLocaleString() ?? "—"}
-                />
-                {/* Cached + reasoning tokens are always surfaced — both
-                    are material to cost and behaviour these days
-                    (provider cache hits flatten cost; reasoning tokens
-                    are billed but invisible in input/output). Missing
-                    values render as `—` rather than 0 so the reader can
-                    tell "we don't know" apart from "definitely zero". */}
-                <TooltipRow
-                  label="Cache read"
-                  value={cacheReadTokens?.toLocaleString() ?? "—"}
-                />
-                {cacheCreationTokens != null && (
-                  <TooltipRow
-                    label="Cache write"
-                    value={cacheCreationTokens.toLocaleString()}
-                  />
-                )}
-                <TooltipRow
-                  label="Reasoning"
-                  value={reasoningTokens?.toLocaleString() ?? "—"}
-                />
-                <Box height="1px" bg="border" marginY={1} />
-                <TooltipRow
-                  label="Total"
-                  value={trace.totalTokens.toLocaleString()}
-                />
-                {trace.tokensEstimated && !hasAuthoritativeTokens && (
-                  <Text textStyle="2xs" color="fg.muted" paddingTop={1}>
-                    Tokens are estimated
-                  </Text>
-                )}
-              </VStack>
+              <TokenBreakdownTooltipContent
+                inputTokens={trace.inputTokens}
+                outputTokens={trace.outputTokens}
+                cacheReadTokens={cacheReadTokens}
+                cacheCreationTokens={cacheCreationTokens}
+                reasoningTokens={reasoningTokens}
+                totalWithCache={totalTokensWithCache}
+                estimated={trace.tokensEstimated && !hasAuthoritativeTokens}
+              />
             }
             positioning={{ placement: "top" }}
           >
@@ -1165,8 +1171,22 @@ export const DrawerHeader = memo(function DrawerHeader({
             </Box>
           </Tooltip>
         )}
+        {reasoningTokens != null && reasoningTokens > 0 && (
+          <MetricPill label="Reasoning" value={formatTokens(reasoningTokens)} />
+        )}
         {trace.models.length > 0 && (
-          <MetricPill label="Model" value={abbreviateModel(trace.models[0]!)} />
+          <HStack gap={1}>
+            <MetricPill
+              label={trace.models.length > 1 ? "Models" : "Model"}
+              value={abbreviateModel(trace.models[0]!)}
+            />
+            {trace.models.length > 1 && (
+              <ExtraModelsBadge models={trace.models.slice(1)} size="sm" />
+            )}
+          </HStack>
+        )}
+        {reasoningEffort && (
+          <MetricPill label="Reasoning effort" value={reasoningEffort} />
         )}
 
         {/* Section 2: Source / tools chips (service, origin, scenario, sdk,
@@ -1209,6 +1229,16 @@ export const DrawerHeader = memo(function DrawerHeader({
           viewMode={viewMode}
           onViewModeChange={setViewMode}
           hasConversation={!!trace.conversationId}
+          // `useConversationContext` returns `isLoading: true` while the
+          // turns are in flight; combined with `turns.length === 0` it
+          // means the conversation hasn't resolved yet. We only want the
+          // "loading" gate when a conversationId is declared — otherwise
+          // the tab is permanently disabled with a different reason.
+          conversationLoading={
+            !!trace.conversationId &&
+            conversationContext.isLoading &&
+            conversationContext.turns.length === 0
+          }
           traceId={trace.traceId}
           endSlot={
             <HStack gap={2}>

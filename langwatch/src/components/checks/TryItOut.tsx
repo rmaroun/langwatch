@@ -22,11 +22,11 @@ import { useColorRawValue } from "../../components/ui/color-mode";
 import { toaster } from "../../components/ui/toaster";
 import { useFilterParams } from "../../hooks/useFilterParams";
 import { useOrganizationTeamProject } from "../../hooks/useOrganizationTeamProject";
-import type {
-  Evaluators,
-  SingleEvaluationResult,
+import {
+  evaluatorsSchema,
+  type Evaluators,
+  type SingleEvaluationResult,
 } from "../../server/evaluations/evaluators.generated";
-import { evaluatorsSchema } from "../../server/evaluations/evaluators.zod.generated";
 import { getEvaluatorDefinitions } from "../../server/evaluations/getEvaluator";
 import {
   buildPreconditionTraceDataFromTrace,
