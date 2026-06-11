@@ -314,7 +314,6 @@ export function initializeDefaultApp(options?: { processRole?: ProcessRole }): A
     planResolver,
     orgRepo,
     simulationReads,
-    clickhouseEnabled,
   );
 
   const planProvider = config.isSaas
@@ -793,7 +792,6 @@ export function createTestApp(overrides?: Partial<AppDependencies>): App {
       async () => FREE_PLAN,
       null,
       SimulationRunService.create(null),
-      false,
     ),
     planProvider: PlanProviderService.create({
       getActivePlan: async () => FREE_PLAN,
