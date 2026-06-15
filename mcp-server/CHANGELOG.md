@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.2](https://github.com/langwatch/langwatch/compare/mcp-server@v0.10.1...mcp-server@v0.10.2) (2026-06-15)
+
+
+### Bug Fixes
+
+* **deps:** bump uuid to &gt;=11.1.1 across the monorepo (closes 7 alerts) ([#4470](https://github.com/langwatch/langwatch/issues/4470)) ([f22706b](https://github.com/langwatch/langwatch/commit/f22706b523526875ecd639d54c1e392d27cbcfae))
+* **deps:** uv security sweep across langevals, mcp-server, python-sdk ([#4687](https://github.com/langwatch/langwatch/issues/4687)) ([7eba1fb](https://github.com/langwatch/langwatch/commit/7eba1fbec1cf01b7929b35529c41f5b089070263))
+
+
+### Miscellaneous
+
+* **deps:** bump vitest ([c609e83](https://github.com/langwatch/langwatch/commit/c609e83429ec60da17dac0b69edf09ed9cec99d4))
+* **deps:** bump vitest from 3.2.4 to 4.1.0 in /mcp-server in the npm_and_yarn group across 1 directory ([#4479](https://github.com/langwatch/langwatch/issues/4479)) ([c609e83](https://github.com/langwatch/langwatch/commit/c609e83429ec60da17dac0b69edf09ed9cec99d4))
+
+
+### Code Refactoring
+
+* **types:** make zod the single source of truth, remove ts-to-zod ([#4651](https://github.com/langwatch/langwatch/issues/4651)) ([d583fbe](https://github.com/langwatch/langwatch/commit/d583fbe2ed2ca2ef320695323c17f6c362ea4efa))
+
 ## [0.10.1](https://github.com/langwatch/langwatch/compare/mcp-server@v0.10.0...mcp-server@v0.10.1) (2026-05-31)
 
 
