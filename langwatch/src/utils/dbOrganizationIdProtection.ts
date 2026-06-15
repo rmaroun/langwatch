@@ -147,6 +147,16 @@ export const ORG_TENANCY_EXEMPT: readonly string[] = [
   // organizationId; the evaluator's sweep is the constraint.
   "AnomalyRule",
   "AnomalyAlert",
+  // Billing reporter (ADR-027) drains `reportedAt IS NULL` across every org as a
+  // background sweep, so a mandatory-organizationId guard cannot apply. Per-org
+  // access (the dispatcher write, the invoice-audit read) carries the composite
+  // (organizationId, sealedHour) key, which the guard already accepts.
+  "StorageUsageHourly",
+  // Storage-meter checkpoint; sibling of BillingMeterCheckpoint above and
+  // deferred for the same reason — org-scoped but not yet audited for every
+  // query shape (ADR-021). Access is via the (organizationId, billingMonth)
+  // composite key.
+  "StorageBillingCheckpoint",
   // Org-scoped but not yet audited for every query shape. Listed explicitly so
   // the partition test stays green while the per-model call-site audit that
   // precedes enforcement (ADR-021) is completed.
